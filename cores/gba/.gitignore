@@ -5,3 +5,4 @@
 *.pyc
 *.a
 *.o
+/src/third-party

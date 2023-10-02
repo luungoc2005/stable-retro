@@ -1,5 +1,9 @@
 {
   "info": {
+    "enemy_character": {
+        "address": 16745563,
+        "type": "|u1"
+    },
     "continuetimer": {
       "address": 16744917,
       "type": "|u1"
@@ -8,6 +12,14 @@
       "address": 16745154,
       "type": ">i2"
     },
+    "enemy_x": {
+        "address": 16745094,
+        "type": ">u2"
+    },
+    "enemy_y": {
+        "address": 16745098,
+        "type": ">u2"
+    },
     "enemy_matches_won": {
       "address": 16745559,
       "type": ">u4"
@@ -15,6 +27,14 @@
     "health": {
       "address": 16744514,
       "type": ">i2"
+    },
+    "agent_x": {
+        "address": 16744454,
+        "type": ">u2"
+    },
+    "agent_y": {
+        "address": 16744458,
+        "type": ">u2"
     },
     "matches_won": {
       "address": 16744922,
