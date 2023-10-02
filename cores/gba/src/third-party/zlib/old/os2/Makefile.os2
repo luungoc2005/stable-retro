@@ -91,14 +91,14 @@ distclean:	clean
 zip:
 	mv Makefile Makefile~; cp -p Makefile.in Makefile
 	rm -f test.c ztest*.c
-	v=`sed -n -e 's/\.//g' -e '/VERSION "/s/.*"\(.*\)".*/\1/p' < zlib.h`;\
+	v=`sed -n -e 's/\.//g' -e '/VERSION.txt "/s/.*"\(.*\)".*/\1/p' < zlib.h`;\
 	zip -ul9 zlib$$v $(DISTFILES)
 	mv Makefile~ Makefile
 
 dist:
 	mv Makefile Makefile~; cp -p Makefile.in Makefile
 	rm -f test.c ztest*.c
-	d=zlib-`sed -n '/VERSION "/s/.*"\(.*\)".*/\1/p' < zlib.h`;\
+	d=zlib-`sed -n '/VERSION.txt "/s/.*"\(.*\)".*/\1/p' < zlib.h`;\
 	rm -f $$d.tar.gz; \
 	if test ! -d ../$$d; then rm -f ../$$d; ln -s `pwd` ../$$d; fi; \
 	files=""; \

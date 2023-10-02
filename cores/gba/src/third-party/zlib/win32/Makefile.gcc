@@ -145,7 +145,7 @@ install: zlib.h zconf.h $(STATICLIB) $(IMPLIB)
 		-e 's|@libdir@|$(LIBRARY_PATH)|g' \
 		-e 's|@sharedlibdir@|$(LIBRARY_PATH)|g' \
 		-e 's|@includedir@|$(INCLUDE_PATH)|g' \
-		-e 's|@VERSION@|'`sed -n -e '/VERSION "/s/.*"\(.*\)".*/\1/p' zlib.h`'|g' \
+		-e 's|@VERSION@|'`sed -n -e '/VERSION.txt "/s/.*"\(.*\)".*/\1/p' zlib.h`'|g' \
 		zlib.pc.in > '$(DESTDIR)$(LIBRARY_PATH)'/pkgconfig/zlib.pc
 
 uninstall:
