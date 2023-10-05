@@ -139,8 +139,10 @@ Temporary
 
 # VSCode config
 /.vscode/
+
 *.zip
 *.so
 tests/
 third-party/
 tb_logs/
+*.bk2

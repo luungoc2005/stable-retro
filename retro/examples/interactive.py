@@ -15,6 +15,7 @@ import pyglet
 from pyglet import gl
 from pyglet.window import key as keycodes
 
+import gymnasium
 import retro
 
 
@@ -37,8 +38,8 @@ class Interactive(abc.ABC):
         # guess a screen size that doesn't distort the image too much but also is not tiny or huge
         display = pyglet.canvas.get_display()
         screen = display.get_default_screen()
-        max_win_width = screen.width * 0.9
-        max_win_height = screen.height * 0.9
+        max_win_width = screen.width * 0.5
+        max_win_height = screen.height * 0.5
         win_width = image_width
         win_height = int(win_width / aspect_ratio)
 
@@ -224,7 +225,6 @@ class Interactive(abc.ABC):
             self._draw()
             self._win.flip()
 
-
 class RetroInteractive(Interactive):
     """
     Interactive setup for retro games
@@ -239,6 +239,7 @@ class RetroInteractive(Interactive):
             render_mode="rgb_array",
         )
         self._buttons = env.buttons
+        # env = StreetFighterEnvWrapper(env)
         super().__init__(env=env, sync=False, tps=60, aspect_ratio=4 / 3)
 
     def get_image(self, _obs, env):

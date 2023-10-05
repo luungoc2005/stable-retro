@@ -14,7 +14,7 @@ from stable_baselines3.common.vec_env import (
     VecFrameStack,
     VecTransposeImage,
 )
-
+from retro.examples.wrappers import StreetFighterFlipEnvWrapper
 import retro
 
 
@@ -74,7 +74,7 @@ def wrap_deepmind_retro(env):
     Configure environment for retro games, using config similar to DeepMind-style Atari in openai/baseline's wrap_deepmind
     """
     env = WarpFrame(env)
-    env = ClipRewardEnv(env)
+    # env = ClipRewardEnv(env)
     return env
 
 
@@ -87,6 +87,8 @@ def main():
 
     def make_env():
         env = make_retro(game=args.game, state=args.state, scenario=args.scenario)
+        if args.game == "StreetFighterIISpecialChampionEdition-Genesis":
+            env = StreetFighterFlipEnvWrapper(env)
         env = wrap_deepmind_retro(env)
         return env
 
