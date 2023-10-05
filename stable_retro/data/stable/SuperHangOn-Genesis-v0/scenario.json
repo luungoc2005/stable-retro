@@ -8,16 +8,19 @@
   "done": {
     "variables": {
       "time": {
-        "op": "equal"
+        "op": "equal",
+        "reference": 0
       }
     }
   },
   "reward": {
     "variables": {
       "score": {
+        "measurement": "delta",
         "reward": 1.0
       },
       "speed": {
+        "measurement": "delta",
         "penalty": -1.0,
         "reward": 1.0
       }
