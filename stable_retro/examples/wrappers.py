@@ -66,3 +66,20 @@ class StochasticFrameSkip(gym.Wrapper):
                 break
         return ob, totrew / self.n, terminated, truncated, info
     
+
+class ActionBias(gym.Wrapper):
+    def __init__(self, env, bias: list):
+        super().__init__(env)
+        self.bias = bias
+        self.rng = np.random.RandomState()
+
+    def step(self, ac):
+        additional_reward = 0
+        for i, bias_value in enumerate(self.bias):
+            # if bias_value > 0 and self.rng.random() < bias_value:
+            #     ac[i] = 1
+            if bias_value != 0 and ac[i] > 0:
+                additional_reward += bias_value
+        ob, rew, terminated, truncated, info = self.env.step(ac)
+
+        return ob, rew + additional_reward, terminated, truncated, info 
