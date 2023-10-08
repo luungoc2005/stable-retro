@@ -4,7 +4,7 @@ full_hp = -1
 full_enemy_hp = -1
 initial_distance = -1
 reward_coeff = 3
-overal_coeff = 0.01
+normalize_coeff = 0.01
 
 function custom_reward ()
   if full_hp == -1 then
@@ -27,12 +27,12 @@ function custom_reward ()
 
   local reward = 0
   if data.health < 0 then
-    reward = -(full_hp ^ ((data.enemy_health + 1) / (full_hp + 1))) * 0.01
+    reward = -(full_hp ^ ((data.enemy_health + 1) / (full_hp + 1))) * 0.2
   elseif data.enemy_health < 0 then
-    reward = (full_hp ^ ((data.health + 1) / (full_enemy_hp + 1))) * 0.01 * reward_coeff
+    reward = (full_hp ^ ((data.health + 1) / (full_enemy_hp + 1))) * reward_coeff * 0.2
   else
-    reward = health_delta - enemy_health_delta * reward_coeff - math.max(distance - initial_distance, 0) * 0.05
+    reward = health_delta - enemy_health_delta * reward_coeff - math.max(distance - initial_distance, 0) * 0.0001
   end
 
-  return reward * overal_coeff
+  return reward * normalize_coeff
 end

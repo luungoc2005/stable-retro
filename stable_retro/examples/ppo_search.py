@@ -184,7 +184,7 @@ def main():
         load_if_exists=True
     )
     try:
-        study.optimize(objective, n_trials=N_TRIALS, timeout=600)
+        study.optimize(objective, n_trials=N_TRIALS, timeout=6000)
     except KeyboardInterrupt:
         pass
     
