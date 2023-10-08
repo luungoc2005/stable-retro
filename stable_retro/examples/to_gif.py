@@ -100,27 +100,35 @@ def main():
     print(f"Loading from {tb_log_name}.zip")
     model = PPO.load(tb_log_name + ".zip", device="mps", env=venv, print_system_info=True)
 
-    total_frames = 1000
+    total_frames = 0
+    max_frames = 10000
     if not args.video:
         # save images
         import imageio
         images = []
         obs = venv.reset()
         img = venv.render(mode="rgb_array")
-        for _ in range(total_frames):
+        for _ in range(max_frames):
             images.append(img)
             action, _ = model.predict(obs, deterministic=True)
             obs, _, _ ,_ = venv.step(action)
             img = venv.render(mode="rgb_array")
+            total_frames += 1
+            if np.all(done):
+                break
 
         imageio.mimsave(f"gifs/{tb_log_name}.gif", [np.array(img) for i, img in enumerate(images) if i%2 == 0], duration=total_frames // 29)
     else:
         venv = VecVideoRecorder(venv, "videos/", record_video_trigger=lambda x: x == 0, video_length=total_frames, name_prefix=tb_log_name)
         venv.reset()
-        for _ in range(total_frames + 1):
+        for _ in range(max_frames + 1):
             action, _ = model.predict(obs, deterministic=True)
-            obs, _, _ ,_ = venv.step(action)
+            obs, _, done ,_ = venv.step(action)
+            if np.all(done):
+                break
         venv.close()
+
+    print(f'Total frames rendered: {total_frames}')
 
 
 if __name__ == "__main__":
