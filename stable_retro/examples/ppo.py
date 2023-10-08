@@ -37,16 +37,17 @@ DEFAULT_HYPERPARAMS = {
 }
 CUSTOM_HYPERPARAMS = {
     "StreetFighterIISpecialChampionEdition-Genesis": {
-        "learning_rate": 5e-5,
-        "n_steps": 2048,
-        "batch_size": 32,
-        "n_epochs": 5,
-        "gamma": 0.98,
-        "gae_lambda": 1.0,
-        "clip_range": 0.3,
-        "ent_coef": 2.5e-5,
-        "max_grad_norm": .6,
-        "vf_coef": 0.18
+        "learning_rate": 2e-5,
+        "n_steps": 64,
+        "batch_size": 16,
+        "n_epochs": 10,
+        "gamma": 0.95,
+        "gae_lambda": 0.98,
+        "clip_range": 0.2,
+        "ent_coef": 7e-5,
+        "max_grad_norm": 0.5,
+        "vf_coef": 0.55,
+        "activation_fn": "relu",
     }
 }
 
