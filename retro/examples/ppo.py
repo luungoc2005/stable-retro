@@ -14,12 +14,43 @@ from stable_baselines3.common.vec_env import (
     VecFrameStack,
     VecTransposeImage,
 )
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.callbacks import EvalCallback
 from retro.examples.wrappers import StreetFighterFlipEnvWrapper, StochasticFrameSkip
 
 import retro
 
 
-def make_retro(*, game, state=None, max_episode_steps=4500, **kwargs):
+DEFAULT_HYPERPARAMS = {
+    "policy": "CnnPolicy",
+    "learning_rate": 2.5e-4,
+    "n_steps": 256,
+    "batch_size": 32,
+    "n_epochs": 4,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.1,
+    "ent_coef": 0.01,
+    "verbose": 1,
+    "device": "mps",
+    "tensorboard_log": "tb_logs",
+}
+CUSTOM_HYPERPARAMS = {
+    "StreetFighterIISpecialChampionEdition-Genesis": {
+        "learning_rate": 5e-5,
+        "n_steps": 2048,
+        "batch_size": 32,
+        "n_epochs": 5,
+        "gamma": 0.98,
+        "gae_lambda": 1.0,
+        "clip_range": 0.3,
+        "ent_coef": 2.5e-5,
+        "max_grad_norm": .6,
+        "vf_coef": 0.18
+    }
+}
+
+def make_retro(*, game, state=None, max_episode_steps=None, **kwargs):
     if state is None:
         state = retro.State.DEFAULT
     env = retro.make(game, state, **kwargs)
@@ -35,6 +66,7 @@ def wrap_deepmind_retro(env):
     """
     Configure environment for retro games, using config similar to DeepMind-style Atari in openai/baseline's wrap_deepmind
     """
+    env = Monitor(env)
     env = WarpFrame(env)
     env = ClipRewardEnv(env)
     return env
@@ -76,27 +108,22 @@ def main():
 
         imageio.mimsave(f"gifs/{tb_log_name}.gif", [np.array(img) for i, img in enumerate(images) if i%2 == 0], duration=total_frames // 29)
 
-    model = PPO(
-        policy="CnnPolicy",
-        env=venv,
-        learning_rate=lambda f: f * 2.5e-4,
-        n_steps=256,
-        batch_size=32,
-        n_epochs=4,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.1,
-        ent_coef=0.01,
-        verbose=1,
-        tensorboard_log="tb_logs",
-        device="mps"
-    )
+
+    kwargs = DEFAULT_HYPERPARAMS.copy()
+    # Sample hyperparameters.
+    if args.game in CUSTOM_HYPERPARAMS:
+        print("Using custom hparams")
+        kwargs.update(CUSTOM_HYPERPARAMS[args.game])
+    kwargs["env"] = venv
+    # Create the RL model.
+    model = PPO(**kwargs)
+
     try:
         model.learn(
-            total_timesteps=10_000_000,
+            total_timesteps=25_000_000,
             log_interval=1,
             progress_bar=True,
-            tb_log_name=tb_log_name
+            tb_log_name=tb_log_name,
         )
     except KeyboardInterrupt:
         on_finish(model)
