@@ -94,7 +94,7 @@ def main():
         env = wrap_deepmind_retro(env)
         return env
 
-    venv = VecTransposeImage(VecFrameStack(SubprocVecEnv([make_env] * 9, start_method="spawn"), n_stack=4))
+    venv = VecTransposeImage(VecFrameStack(SubprocVecEnv([make_env] * (1 if args.video else 9), start_method="spawn"), n_stack=4))
     tb_log_name = f"ppo-{args.game}"
 
     print(f"Loading from {tb_log_name}.zip")
@@ -102,11 +102,12 @@ def main():
 
     total_frames = 0
     max_frames = 10000
+    obs = venv.reset()
+
     if not args.video:
         # save images
         import imageio
         images = []
-        obs = venv.reset()
         img = venv.render(mode="rgb_array")
         for _ in range(max_frames):
             images.append(img)
@@ -119,11 +120,14 @@ def main():
 
         imageio.mimsave(f"gifs/{tb_log_name}.gif", [np.array(img) for i, img in enumerate(images) if i%2 == 0], duration=total_frames // 29)
     else:
-        venv = VecVideoRecorder(venv, "videos/", record_video_trigger=lambda x: x == 0, video_length=total_frames, name_prefix=tb_log_name)
+        venv = VecVideoRecorder(venv, "videos/", record_video_trigger=lambda x: x == 0, video_length=max_frames, name_prefix=tb_log_name)
         venv.reset()
         for _ in range(max_frames + 1):
             action, _ = model.predict(obs, deterministic=True)
+            action_meaning = venv.env.env_method("get_action_meaning", ([1 if item > 0 else 0 for item in action[0]]))
+            print(action_meaning)
             obs, _, done ,_ = venv.step(action)
+            total_frames += 1
             if np.all(done):
                 break
         venv.close()

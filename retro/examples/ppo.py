@@ -16,7 +16,7 @@ from stable_baselines3.common.vec_env import (
     VecTransposeImage,
 )
 from stable_baselines3.common.monitor import Monitor
-from retro.examples.wrappers import StreetFighterFlipEnvWrapper, StochasticFrameSkip
+from retro.examples.wrappers import StreetFighterFlipEnvWrapper, StochasticFrameSkip, ActionBias
 
 import retro
 
@@ -49,23 +49,6 @@ CUSTOM_HYPERPARAMS = {
         "vf_coef": 0.18
     }
 }
-
-class ActionBias(gym.Wrapper):
-    def __init__(self, env: Env, bias: list):
-        super().__init__(env)
-        self.bias = bias
-        self.rng = np.random.RandomState()
-
-    def step(self, ac):
-        additional_reward = 0
-        for i, bias_value in enumerate(self.bias):
-            # if bias_value > 0 and self.rng.random() < bias_value:
-            #     ac[i] = 1
-            if bias_value != 0 and ac[i] > 0:
-                additional_reward += bias_value
-        ob, rew, terminated, truncated, info = self.env.step(ac)
-
-        return ob, rew + additional_reward, terminated, truncated, info 
 
 def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_skip=True, **kwargs):
     if state is None:
