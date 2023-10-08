@@ -5,6 +5,7 @@ Train an agent using Proximal Policy Optimization from Stable Baselines 3
 import argparse
 
 import gymnasium as gym
+from gymnasium.core import Env
 import numpy as np
 from gymnasium.wrappers.time_limit import TimeLimit
 from stable_baselines3 import PPO
@@ -15,7 +16,6 @@ from stable_baselines3.common.vec_env import (
     VecTransposeImage,
 )
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.callbacks import EvalCallback
 from retro.examples.wrappers import StreetFighterFlipEnvWrapper, StochasticFrameSkip
 
 import retro
@@ -50,14 +50,44 @@ CUSTOM_HYPERPARAMS = {
     }
 }
 
-def make_retro(*, game, state=None, max_episode_steps=None, **kwargs):
+class ActionBias(gym.Wrapper):
+    def __init__(self, env: Env, bias: list):
+        super().__init__(env)
+        self.bias = bias
+        self.rng = np.random.RandomState()
+
+    def step(self, ac):
+        additional_reward = 0
+        for i, bias_value in enumerate(self.bias):
+            # if bias_value > 0 and self.rng.random() < bias_value:
+            #     ac[i] = 1
+            if bias_value != 0 and ac[i] > 0:
+                additional_reward += bias_value
+        ob, rew, terminated, truncated, info = self.env.step(ac)
+
+        return ob, rew + additional_reward, terminated, truncated, info 
+
+def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_skip=True, **kwargs):
     if state is None:
         state = retro.State.DEFAULT
     env = retro.make(game, state, **kwargs)
     if game == "StreetFighterIISpecialChampionEdition-Genesis":
         env = StreetFighterFlipEnvWrapper(env)
-    env = StochasticFrameSkip(env, n=4, stickprob=0.25)
-    if max_episode_steps is not None:
+    if action_bias != '':
+        action_bias_list = []
+        if ',' in action_bias:
+            action_bias_list = action_bias.split(',')
+        else:
+            action_bias_list = action_bias.split(' ')
+        action_bias_list = [float(item.strip()) for item in action_bias_list]
+        action_meaning = env.get_action_meaning([1 if item > 0 else 0 for item in action_bias_list])
+        if len(action_meaning) > 0:
+            import warnings
+            warnings.warn(f"Action bias on: {action_meaning}")
+        env = ActionBias(env, action_bias_list)
+    if frame_skip:
+        env = StochasticFrameSkip(env, n=4, stickprob=0.25)
+    if max_episode_steps > 0:
         env = TimeLimit(env, max_episode_steps=max_episode_steps)
     return env
 
@@ -76,11 +106,21 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--game", default="Airstriker-Genesis")
     parser.add_argument("--state", default=retro.State.DEFAULT)
+    parser.add_argument("--action-bias", default='0 0 0 0 0 0 0 0 0 0 0 0')
+    parser.add_argument("--no-frame-skip", action='store_true')
     parser.add_argument("--scenario", default=None)
     args = parser.parse_args()
+    print(args)
 
     def make_env(render_mode="human"):
-        env = make_retro(game=args.game, state=args.state, scenario=args.scenario, render_mode=render_mode)
+        env = make_retro(
+            game=args.game, 
+            state=args.state, 
+            scenario=args.scenario, 
+            action_bias=args.action_bias, 
+            frame_skip=not args.no_frame_skip, 
+            render_mode=render_mode
+        )
         env = wrap_deepmind_retro(env)
         return env
 
