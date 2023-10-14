@@ -27,7 +27,7 @@ import torch.nn as nn
 N_TRIALS = 100
 N_STARTUP_TRIALS = 5
 N_EVALUATIONS = 2
-N_TIMESTEPS = int(5e4)
+N_TIMESTEPS = int(5e5)
 EVAL_FREQ = int(N_TIMESTEPS / N_EVALUATIONS)
 N_EVAL_EPISODES = 3
 
@@ -184,7 +184,7 @@ def main():
         load_if_exists=True
     )
     try:
-        study.optimize(objective, n_trials=N_TRIALS, timeout=6000)
+        study.optimize(objective, n_trials=N_TRIALS, timeout=60000)
     except KeyboardInterrupt:
         pass
     

@@ -37,17 +37,16 @@ DEFAULT_HYPERPARAMS = {
 }
 CUSTOM_HYPERPARAMS = {
     "StreetFighterIISpecialChampionEdition-Genesis": {
-        "learning_rate": 2e-5,
+        "learning_rate": 1e-4,
         "n_steps": 64,
-        "batch_size": 16,
-        "n_epochs": 10,
-        "gamma": 0.95,
-        "gae_lambda": 0.98,
+        "batch_size": 512,
+        "n_epochs": 5,
+        "gamma": 0.995,
+        "gae_lambda": 0.95,
         "clip_range": 0.2,
-        "ent_coef": 7e-5,
-        "max_grad_norm": 0.5,
-        "vf_coef": 0.55,
-        "activation_fn": "relu",
+        "ent_coef": 0.005,
+        "max_grad_norm": 0.9,
+        "vf_coef": 0.85,
     }
 }
 
@@ -82,13 +81,14 @@ def wrap_deepmind_retro(env):
     """
     env = Monitor(env)
     env = WarpFrame(env)
-    env = ClipRewardEnv(env)
+    # env = ClipRewardEnv(env)
     return env
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--game", default="Airstriker-Genesis")
+    parser.add_argument("--resume", action='store_true')
     parser.add_argument("--state", default=retro.State.DEFAULT)
     parser.add_argument("--action-bias", default='0 0 0 0 0 0 0 0 0 0 0 0')
     parser.add_argument("--no-frame-skip", action='store_true')
@@ -141,6 +141,11 @@ def main():
     kwargs["env"] = venv
     # Create the RL model.
     model = PPO(**kwargs)
+    if args.resume:
+        import os
+        model_path = tb_log_name + ".zip"
+        if os.path.exists(model_path):
+            model = PPO.load(model_path, venv, print_system_info=True)
 
     try:
         model.learn(
