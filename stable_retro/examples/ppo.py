@@ -164,6 +164,29 @@ def main():
 
         imageio.mimsave(f"gifs/{tb_log_name}.gif", [np.array(img) for i, img in enumerate(images) if i%2 == 0], duration=total_frames // 29)
 
+
+    kwargs = DEFAULT_HYPERPARAMS.copy()
+    # Sample hyperparameters.
+    if args.game in CUSTOM_HYPERPARAMS:
+        print("Using custom hparams")
+        hparams = CUSTOM_HYPERPARAMS[args.game]
+        activation_fn = hparams["activation_fn"]
+        del hparams["activation_fn"]
+        kwargs.update(hparams)
+        activation_fn = {"tanh": nn.Tanh, "relu": nn.ReLU}[activation_fn]
+        kwargs["policy_kwargs"] = dict(
+            activation_fn=activation_fn,
+        )
+
+    kwargs["env"] = venv
+    # Create the RL model.
+    model = PPO(**kwargs)
+    if args.resume:
+        import os
+        model_path = tb_log_name + ".zip"
+        if os.path.exists(model_path):
+            model = PPO.load(model_path, venv, print_system_info=True)
+
     try:
         model.learn(
             total_timesteps=25_000_000,
