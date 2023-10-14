@@ -3,6 +3,7 @@ Train an agent using Proximal Policy Optimization from Stable Baselines 3
 """
 
 import argparse
+import pprint
 
 import gymnasium as gym
 import numpy as np
@@ -112,7 +113,7 @@ def main():
         for _ in range(max_frames):
             images.append(img)
             action, _ = model.predict(obs, deterministic=True)
-            obs, _, _ ,_ = venv.step(action)
+            obs, _, _ , info = venv.step(action)
             img = venv.render(mode="rgb_array")
             total_frames += 1
             if np.all(done):
@@ -122,17 +123,19 @@ def main():
     else:
         venv = VecVideoRecorder(venv, "videos/", record_video_trigger=lambda x: x == 0, video_length=max_frames, name_prefix=tb_log_name)
         venv.reset()
-        for _ in range(max_frames + 1):
+        for i in range(max_frames + 1):
             action, _ = model.predict(obs, deterministic=True)
             action_meaning = venv.env.env_method("get_action_meaning", ([1 if item > 0 else 0 for item in action[0]]))
-            print(action_meaning)
-            obs, _, done ,_ = venv.step(action)
+            print(f"Step {i}: {action_meaning[0]}\r", end="")
+            obs, _, done ,info = venv.step(action)
             total_frames += 1
             if np.all(done):
                 break
         venv.close()
 
+    print('')
     print(f'Total frames rendered: {total_frames}')
+    pprint.pprint(info)
 
 
 if __name__ == "__main__":

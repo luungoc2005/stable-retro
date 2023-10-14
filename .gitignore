@@ -146,3 +146,4 @@ tests/
 third-party/
 tb_logs/
 *.bk2
+*.pth
