@@ -16,7 +16,12 @@ from stable_baselines3.common.vec_env import (
     VecTransposeImage,
 )
 from stable_baselines3.common.monitor import Monitor
-from retro.examples.wrappers import StreetFighterFlipEnvWrapper, StochasticFrameSkip, ActionBias
+from retro.examples.wrappers import (
+    StreetFighterFlipEnvWrapper, 
+    StochasticFrameSkip, 
+    ActionBias,
+    StreetFighter2Discretizer,
+)
 
 import retro
 
@@ -50,12 +55,14 @@ CUSTOM_HYPERPARAMS = {
     }
 }
 
-def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_skip=True, **kwargs):
+def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_skip=True, discrete=False, **kwargs):
     if state is None:
         state = retro.State.DEFAULT
     env = retro.make(game, state, **kwargs)
     if game == "StreetFighterIISpecialChampionEdition-Genesis":
         env = StreetFighterFlipEnvWrapper(env)
+        if discrete:
+            env = StreetFighter2Discretizer(env)
     if action_bias != '':
         action_bias_list = []
         if ',' in action_bias:
@@ -89,6 +96,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--game", default="Airstriker-Genesis")
     parser.add_argument("--resume", action='store_true')
+    parser.add_argument("--discrete", action='store_true')
     parser.add_argument("--state", default=retro.State.DEFAULT)
     parser.add_argument("--action-bias", default='0 0 0 0 0 0 0 0 0 0 0 0')
     parser.add_argument("--no-frame-skip", action='store_true')
@@ -103,6 +111,7 @@ def main():
             scenario=args.scenario, 
             action_bias=args.action_bias, 
             frame_skip=not args.no_frame_skip, 
+            discrete=args.discrete,
             render_mode=render_mode
         )
         env = wrap_deepmind_retro(env)
@@ -111,6 +120,8 @@ def main():
     subproc_env = SubprocVecEnv([make_env] * 8, start_method="spawn")
     venv = VecTransposeImage(VecFrameStack(subproc_env, n_stack=4))
     tb_log_name = f"ppo-{args.game}"
+    if args.discrete:
+        tb_log_name += "-discrete"
 
     def on_finish(model):
         model.save(tb_log_name)

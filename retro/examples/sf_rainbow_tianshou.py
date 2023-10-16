@@ -282,7 +282,7 @@ def main():
 
         print("Testing agent ...")
         test_collector.reset()
-        result = test_collector.collect(n_episode=args.training_num, render=args.render)
+        result = test_collector.collect(n_episode=args.training_num, render=True)
 
         pprint.pprint(result)
         rew = result["rews"].mean()
