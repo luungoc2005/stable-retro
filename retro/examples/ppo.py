@@ -22,7 +22,7 @@ from retro.examples.wrappers import (
     ActionBias,
     StreetFighter2Discretizer,
 )
-
+from retro.examples.impala_cnn import ImpalaCNN
 import retro
 
 
@@ -97,6 +97,7 @@ def main():
     parser.add_argument("--game", default="Airstriker-Genesis")
     parser.add_argument("--resume", action='store_true')
     parser.add_argument("--discrete", action='store_true')
+    parser.add_argument("--cnn", default='nature')
     parser.add_argument("--state", default=retro.State.DEFAULT)
     parser.add_argument("--action-bias", default='0 0 0 0 0 0 0 0 0 0 0 0')
     parser.add_argument("--no-frame-skip", action='store_true')
@@ -123,6 +124,26 @@ def main():
     if args.discrete:
         tb_log_name += "-discrete"
 
+    kwargs = DEFAULT_HYPERPARAMS.copy()
+    # Sample hyperparameters.
+    if args.game in CUSTOM_HYPERPARAMS:
+        print("Using custom hparams")
+        kwargs.update(CUSTOM_HYPERPARAMS[args.game])
+    if args.cnn == 'impala':
+        tb_log_name += '-impala'
+        kwargs['policy_kwargs'] = {
+            'features_extractor_class': ImpalaCNN
+        }
+
+    kwargs["env"] = venv
+    # Create the RL model.
+    model = PPO(**kwargs)
+    if args.resume:
+        import os
+        model_path = tb_log_name + ".zip"
+        if os.path.exists(model_path):
+            model = PPO.load(model_path, venv, print_system_info=True)
+
     def on_finish(model):
         model.save(tb_log_name)
 
@@ -142,21 +163,6 @@ def main():
             img = new_venv.render(mode="rgb_array")
 
         imageio.mimsave(f"gifs/{tb_log_name}.gif", [np.array(img) for i, img in enumerate(images) if i%2 == 0], duration=total_frames // 29)
-
-
-    kwargs = DEFAULT_HYPERPARAMS.copy()
-    # Sample hyperparameters.
-    if args.game in CUSTOM_HYPERPARAMS:
-        print("Using custom hparams")
-        kwargs.update(CUSTOM_HYPERPARAMS[args.game])
-    kwargs["env"] = venv
-    # Create the RL model.
-    model = PPO(**kwargs)
-    if args.resume:
-        import os
-        model_path = tb_log_name + ".zip"
-        if os.path.exists(model_path):
-            model = PPO.load(model_path, venv, print_system_info=True)
 
     try:
         model.learn(
