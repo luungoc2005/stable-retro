@@ -17,8 +17,10 @@ from retro.examples.wrappers import (
     FrameStack,
     ScaledFloatFrame,
     WarpFrame,
-    StreetFighter2Discretizer
+    StreetFighter2Discretizer,
+    SuperHangOnDiscretizer,
 )
+from retro.examples.impala_cnn import ConvSequence
 from torch.utils.tensorboard import SummaryWriter
 
 from tianshou.env import ShmemVectorEnv
@@ -59,14 +61,43 @@ class VisEncoder(nn.Module):
         obs = torch.as_tensor(obs, dtype=self.net.parameters().__next__().dtype)
         return self.net(obs)
 
+class VisEncoderImpala(nn.Module):
+    def __init__(self, c, h, w, output_dim):
+        super().__init__()
+        
+        shape = (c, h, w)
+        
+        conv_seqs = []
+        for out_channels in [16, 32, 32]:
+            conv_seq = ConvSequence(shape, out_channels)
+            shape = conv_seq.get_output_shape()
+            conv_seqs.append(conv_seq)
+
+        conv_seqs += [
+            nn.Flatten(),
+            nn.ReLU(),
+            nn.Linear(in_features=shape[0] * shape[1] * shape[2], out_features=256),
+            nn.ReLU(),
+            nn.Linear(in_features=256, out_features=output_dim),
+        ]
+        self.network = nn.Sequential(*conv_seqs)
+
+    def forward(self, obs) -> torch.Tensor:
+        obs = torch.as_tensor(obs, dtype=self.net.parameters().__next__().dtype)
+        return self.network(obs)
+
 class RainbowNet(nn.Module):
-    def __init__(self, observation_space: spaces.Space, action_space: spaces.MultiBinary, num_atoms: int = 51, is_noisy: bool = True):
+    def __init__(self, observation_space: spaces.Space, action_space: spaces.MultiBinary, num_atoms: int = 51, is_noisy: bool = True, use_impala=False):
         super().__init__()
         c, h, w = observation_space.shape[:3]
         self.action_num = action_space.n
         self.num_atoms = num_atoms
         hidden_dim = 512
-        self.encoder = VisEncoder(c, h, w, hidden_dim)
+
+        if use_impala:
+            self.encoder = VisEncoderImpala(c, h, w, hidden_dim)
+        else:
+            self.encoder = VisEncoder(c, h, w, hidden_dim)
 
         def linear(x, y):
             if is_noisy:
@@ -109,10 +140,16 @@ class RainbowNet(nn.Module):
 def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_skip=True, **kwargs):
     if state is None:
         state = retro.State.DEFAULT
+        
     env = retro.make(game, state, **kwargs)
+
     if game == "StreetFighterIISpecialChampionEdition-Genesis":
         env = StreetFighterFlipEnvWrapper(env)
         env = StreetFighter2Discretizer(env)
+
+    if game == "SuperHangOn-Genesis":
+        env = SuperHangOnDiscretizer(env)
+
     if action_bias != '':
         action_bias_list = []
         if ',' in action_bias:
@@ -125,10 +162,13 @@ def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_s
             import warnings
             warnings.warn(f"Action bias on: {action_meaning}")
         env = ActionBias(env, action_bias_list)
+
     if frame_skip:
         env = StochasticFrameSkip(env, n=4, stickprob=0.25)
+
     if max_episode_steps > 0:
         env = TimeLimit(env, max_episode_steps=max_episode_steps)
+
     return env
 
 
@@ -147,6 +187,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--game", default=GAME_NAME)
     parser.add_argument("--resume", action='store_true')
+    parser.add_argument("--impala", action='store_true', default=False)
     parser.add_argument("--state", default=retro.State.DEFAULT)
     parser.add_argument("--action-bias", default='0 0 0 0 0 0 0 0 0 0 0 0')
     parser.add_argument("--no-frame-skip", action='store_true')
@@ -188,12 +229,14 @@ def main():
 
     dummy_env = make_env()
     observation_space, action_space = dummy_env.observation_space, dummy_env.action_space
-    model = RainbowNet(observation_space, action_space)
+    model = RainbowNet(observation_space, action_space, use_impala=args.impala)
     dummy_env.close()
     del dummy_env
 
     venv = ShmemVectorEnv([make_env] * args.training_num)
     tb_log_name = f"ppo-{args.game}"
+    if args.impala:
+        tb_log_name += "-impala"
     tb_log_path = f"tb_logs_tianshou/{tb_log_name}"
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)

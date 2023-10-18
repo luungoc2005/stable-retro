@@ -21,6 +21,7 @@ from retro.examples.wrappers import (
     StochasticFrameSkip, 
     ActionBias,
     StreetFighter2Discretizer,
+    SuperHangOnDiscretizer,
 )
 from retro.examples.impala_cnn import ImpalaCNN
 import retro
@@ -63,6 +64,8 @@ def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_s
         env = StreetFighterFlipEnvWrapper(env)
         if discrete:
             env = StreetFighter2Discretizer(env)
+    if game == "SuperHangOn-Genesis":
+        env = SuperHangOnDiscretizer(env)
     if action_bias != '':
         action_bias_list = []
         if ',' in action_bias:
