@@ -49,6 +49,20 @@ class StreetFighter2Discretizer(Discretizer):
                                          ['RIGHT', 'Z'],
                                          ['DOWN', 'RIGHT', 'Z']])
 
+class SuperHangOnDiscretizer(Discretizer):
+    def __init__(self, env):
+        super().__init__(env=env, combos=[
+            ['B'],
+            ['B', 'LEFT'],
+            ['B', 'RIGHT'],
+            ['A'],
+            ['A', 'LEFT'],
+            ['A', 'RIGHT'],
+            ['C'],
+            ['C', 'LEFT'],
+            ['C', 'RIGHT']
+        ])
+
 class StreetFighterFlipEnvWrapper(gym.Wrapper):
     def __init__(self, env):
         self.env = env

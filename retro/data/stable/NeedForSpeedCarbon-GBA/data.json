@@ -1,0 +1,24 @@
+{
+  "info": {
+    "screen": {
+      "address": 33617494,
+      "type": ">=u4"
+    },
+    "reverse": {
+      "address": 50353028,
+      "type": "|d1"
+    },
+    "speed1": {
+      "address": 33684043,
+      "type": ">u4"
+    },
+    "speed2": {
+      "address": 33684059,
+      "type": ">u4"
+    },
+    "speed3": {
+      "address": 33684075,
+      "type": ">u4"
+    }
+  }
+}

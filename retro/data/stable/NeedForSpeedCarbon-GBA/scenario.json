@@ -1,0 +1,16 @@
+{
+  "done": {
+    "variables": {
+      "screen": {
+        "op": "equal",
+        "reference": 1
+      }
+    }
+  },
+  "reward": {
+    "script": "lua:speed_reward"
+  },
+  "scripts": [
+    "script.lua"
+  ]
+}
