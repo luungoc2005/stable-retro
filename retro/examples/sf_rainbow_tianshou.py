@@ -1,3 +1,4 @@
+import tianshou_patch as _
 import torch
 import torch.nn as nn
 import numpy as np
@@ -57,8 +58,10 @@ class VisEncoder(nn.Module):
             nn.ReLU(inplace=True),
         )
 
+        self._next_param = self.net.parameters().__next__()
+        
     def forward(self, obs) -> torch.Tensor:
-        obs = torch.as_tensor(obs, dtype=self.net.parameters().__next__().dtype)
+        obs = torch.as_tensor(obs, dtype=self._next_param.dtype, device=self._next_param.device)
         return self.net(obs)
 
 class VisEncoderImpala(nn.Module):
@@ -82,8 +85,10 @@ class VisEncoderImpala(nn.Module):
         ]
         self.network = nn.Sequential(*conv_seqs)
 
+        self._next_param = self.network.parameters().__next__()
+
     def forward(self, obs) -> torch.Tensor:
-        obs = torch.as_tensor(obs, dtype=self.net.parameters().__next__().dtype)
+        obs = torch.as_tensor(obs, dtype=self._next_param.dtype, device=self._next_param.device)
         return self.network(obs)
 
 class RainbowNet(nn.Module):
@@ -212,6 +217,7 @@ def main():
     parser.add_argument("--v-min", type=float, default=-10.0)
     parser.add_argument("--v-max", type=float, default=10.0)
     parser.add_argument("--lr", type=float, default=0.0000625)
+    parser.add_argument("--device", type=str, default='mps')
     args = parser.parse_args()
     print(args)
 
@@ -229,7 +235,8 @@ def main():
 
     dummy_env = make_env()
     observation_space, action_space = dummy_env.observation_space, dummy_env.action_space
-    model = RainbowNet(observation_space, action_space, use_impala=args.impala)
+    model = RainbowNet(observation_space, action_space, use_impala=args.impala).to(args.device)
+    model.compile(backend="aot_eager")
     dummy_env.close()
     del dummy_env
 
@@ -250,7 +257,7 @@ def main():
         v_max=args.v_max,
         estimation_step=args.n_step,
         target_update_freq=args.target_update_freq,
-    )
+    ).to(args.device)
 
     buffer = PrioritizedVectorReplayBuffer(
         args.buffer_size,
