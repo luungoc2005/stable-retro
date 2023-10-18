@@ -23,6 +23,7 @@ from retro.examples.wrappers import (
     StreetFighter2Discretizer,
     SuperHangOnDiscretizer,
 )
+import torch.nn as nn
 from retro.examples.impala_cnn import ImpalaCNN
 import retro
 
