@@ -304,6 +304,9 @@ class RetroEnv(gym.Env):
 
         self.statename = statename
 
+    def get_state(self):
+        return self.em.get_state()
+
     def compute_step(self):
         if self.players > 1 and self.multi_rewards:
             reward = [self.data.current_reward(p) for p in range(self.players)]

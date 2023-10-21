@@ -20,8 +20,7 @@ from retro.examples.wrappers import (
     StreetFighterFlipEnvWrapper, 
     StochasticFrameSkip, 
     ActionBias,
-    StreetFighter2Discretizer,
-    SuperHangOnDiscretizer,
+    GAME_WRAPPERS,
 )
 import torch.nn as nn
 from retro.examples.impala_cnn import ImpalaCNN
@@ -61,12 +60,11 @@ def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_s
     if state is None:
         state = retro.State.DEFAULT
     env = retro.make(game, state, **kwargs)
-    if game == "StreetFighterIISpecialChampionEdition-Genesis":
-        env = StreetFighterFlipEnvWrapper(env)
-        if discrete:
-            env = StreetFighter2Discretizer(env)
-    if game == "SuperHangOn-Genesis":
-        env = SuperHangOnDiscretizer(env)
+
+    if game in GAME_WRAPPERS:
+        for _wrapper in GAME_WRAPPERS[game]:
+            env = _wrapper(env)
+
     if action_bias != '':
         action_bias_list = []
         if ',' in action_bias:
@@ -101,7 +99,7 @@ def main():
     parser.add_argument("--game", default="Airstriker-Genesis")
     parser.add_argument("--resume", action='store_true')
     parser.add_argument("--discrete", action='store_true')
-    parser.add_argument("--cnn", default='nature')
+    parser.add_argument("--cnn", default='nature', choices=['nature', 'impala'])
     parser.add_argument("--state", default=retro.State.DEFAULT)
     parser.add_argument("--action-bias", default='0 0 0 0 0 0 0 0 0 0 0 0')
     parser.add_argument("--no-frame-skip", action='store_true')

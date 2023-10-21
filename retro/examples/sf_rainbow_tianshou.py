@@ -18,7 +18,7 @@ from retro.examples.wrappers import (
     FrameStack,
     ScaledFloatFrame,
     WarpFrame,
-    DISCRETIZER_CLASS,
+    GAME_WRAPPERS,
 )
 from retro.examples.impala_cnn import ConvSequence
 from torch.utils.tensorboard import SummaryWriter
@@ -148,13 +148,9 @@ def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_s
         
     env = retro.make(game, state, **kwargs)
 
-    if game == "StreetFighterIISpecialChampionEdition-Genesis":
-        env = StreetFighterFlipEnvWrapper(env)
-
-    if game in DISCRETIZER_CLASS:
-        env = DISCRETIZER_CLASS[game](env)
-    else:
-        raise NotImplementedError("Game discretizer not implemented")
+    if game in GAME_WRAPPERS:
+        for _wrapper in GAME_WRAPPERS[game]:
+            env = _wrapper(env)
 
     if action_bias != '':
         action_bias_list = []
