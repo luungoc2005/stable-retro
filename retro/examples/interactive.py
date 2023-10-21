@@ -239,6 +239,7 @@ class RetroInteractive(Interactive):
             render_mode="rgb_array",
         )
         self._buttons = env.buttons
+        print(self._buttons)
         # env = StreetFighterEnvWrapper(env)
         super().__init__(env=env, sync=False, tps=60, aspect_ratio=4 / 3)
 

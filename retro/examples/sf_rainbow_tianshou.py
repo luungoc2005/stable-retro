@@ -18,8 +18,7 @@ from retro.examples.wrappers import (
     FrameStack,
     ScaledFloatFrame,
     WarpFrame,
-    StreetFighter2Discretizer,
-    SuperHangOnDiscretizer,
+    DISCRETIZER_CLASS,
 )
 from retro.examples.impala_cnn import ConvSequence
 from torch.utils.tensorboard import SummaryWriter
@@ -44,11 +43,11 @@ class VisEncoder(nn.Module):
         super().__init__()
         cnn_encoder = nn.Sequential(
             layer_init(nn.Conv2d(c, 32, kernel_size=8, stride=4)),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
             layer_init(nn.Conv2d(32, 64, kernel_size=4, stride=2)),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
             layer_init(nn.Conv2d(64, 64, kernel_size=3, stride=1)),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
             nn.Flatten(),
         )
         with torch.no_grad():
@@ -56,7 +55,7 @@ class VisEncoder(nn.Module):
         self.net = nn.Sequential(
             cnn_encoder,
             layer_init(nn.Linear(self.output_dim, output_dim)),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
         )
 
         self._next_param = self.net.parameters().__next__()
@@ -79,9 +78,9 @@ class VisEncoderImpala(nn.Module):
 
         conv_seqs += [
             nn.Flatten(),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(in_features=shape[0] * shape[1] * shape[2], out_features=256),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(in_features=256, out_features=output_dim),
         ]
         self.network = nn.Sequential(*conv_seqs)
@@ -112,13 +111,13 @@ class RainbowNet(nn.Module):
         
         self.Q = nn.Sequential(
             linear(hidden_dim, hidden_dim),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
             linear(hidden_dim, self.action_num * self.num_atoms),
         )
 
         self.V = nn.Sequential(
             linear(hidden_dim, hidden_dim),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
             linear(hidden_dim, self.num_atoms),
         )
 
@@ -151,10 +150,11 @@ def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_s
 
     if game == "StreetFighterIISpecialChampionEdition-Genesis":
         env = StreetFighterFlipEnvWrapper(env)
-        env = StreetFighter2Discretizer(env)
 
-    if game == "SuperHangOn-Genesis":
-        env = SuperHangOnDiscretizer(env)
+    if game in DISCRETIZER_CLASS:
+        env = DISCRETIZER_CLASS[game](env)
+    else:
+        raise NotImplementedError("Game discretizer not implemented")
 
     if action_bias != '':
         action_bias_list = []
@@ -238,7 +238,7 @@ def main():
     dummy_env = make_env()
     observation_space, action_space = dummy_env.observation_space, dummy_env.action_space
     model = RainbowNet(observation_space, action_space, use_impala=args.impala).to(args.device)
-    # model.compile(backend="aot_eager")
+    torch.compile(model, backend="aot_eager")
     dummy_env.close()
     del dummy_env
 
