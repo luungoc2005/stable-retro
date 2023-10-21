@@ -14,9 +14,9 @@ class ResidualBlock(nn.Module):
 
     def forward(self, x):
         inputs = x
-        x = nn.functional.relu(x)
+        x = nn.functional.leaky_relu(x)
         x = self.conv0(x)
-        x = nn.functional.relu(x)
+        x = nn.functional.leaky_relu(x)
         x = self.conv1(x)
         return x + inputs
 
@@ -93,9 +93,9 @@ class ImpalaCNN(BaseFeaturesExtractor):
 
         conv_seqs += [
             nn.Flatten(),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(in_features=shape[0] * shape[1] * shape[2], out_features=256),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(in_features=256, out_features=features_dim),
         ]
         self.network = nn.Sequential(*conv_seqs)

@@ -29,6 +29,7 @@ from tianshou.data import Batch, Collector, PrioritizedVectorReplayBuffer, Vecto
 from tianshou.policy import RainbowPolicy
 from tianshou.trainer import OffpolicyTrainer
 from tianshou.utils import TensorboardLogger
+import json
 
 GAME_NAME = "StreetFighterIISpecialChampionEdition-Genesis"
 
@@ -177,12 +178,12 @@ def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_s
     return env
 
 
-def wrap_deepmind_retro(env):
+def wrap_deepmind_retro(env, grayscale=True):
     """
     Configure environment for retro games, using config similar to DeepMind-style Atari in openai/baseline's wrap_deepmind
     """
     env = Monitor(env)
-    env = WarpFrame(env)
+    env = WarpFrame(env, grayscale=grayscale)
     env = ScaledFloatFrame(env)
     env = FrameStack(env, 4)
     # env = ClipRewardEnv(env)
@@ -196,6 +197,7 @@ def main():
     parser.add_argument("--state", default=retro.State.DEFAULT)
     parser.add_argument("--action-bias", default='0 0 0 0 0 0 0 0 0 0 0 0')
     parser.add_argument("--no-frame-skip", action='store_true')
+    parser.add_argument("--no-grayscale", action='store_true', default=False)
     parser.add_argument("--scenario", default=None)
     parser.add_argument("--buffer-size", type=int, default=100000)
     parser.add_argument("--batch-size", type=int, default=32)
@@ -230,21 +232,32 @@ def main():
             frame_skip=not args.no_frame_skip, 
             render_mode=render_mode
         )
-        env = wrap_deepmind_retro(env)
+        env = wrap_deepmind_retro(env, grayscale=not args.no_grayscale)
         return env
 
     dummy_env = make_env()
     observation_space, action_space = dummy_env.observation_space, dummy_env.action_space
     model = RainbowNet(observation_space, action_space, use_impala=args.impala).to(args.device)
-    model.compile(backend="aot_eager")
+    # model.compile(backend="aot_eager")
     dummy_env.close()
     del dummy_env
 
     venv = ShmemVectorEnv([make_env] * args.training_num)
     tb_log_name = f"ppo-{args.game}"
+    if args.no_frame_skip:
+        tb_log_name += "-NoSkip"
+    if args.no_grayscale:
+        tb_log_name += "-rgb"
     if args.impala:
         tb_log_name += "-impala"
     tb_log_path = f"tb_logs_tianshou/{tb_log_name}"
+    increment = -1
+    def get_final_path():
+        return (tb_log_path + f"_{increment}") if increment > -1 else tb_log_path
+    while os.path.exists(get_final_path()):
+        increment += 1
+    tb_log_path = get_final_path()
+    print(f"Saving experiment into {tb_log_path}")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
@@ -259,12 +272,15 @@ def main():
         target_update_freq=args.target_update_freq,
     ).to(args.device)
 
+    stack_num = 4
+    if args.no_grayscale:
+        stack_num *= 3
     buffer = PrioritizedVectorReplayBuffer(
         args.buffer_size,
         buffer_num=args.training_num,
         ignore_obs_next=True,
         save_only_last_obs=True,
-        stack_num=4,
+        stack_num=stack_num,
         alpha=args.alpha,
         beta=args.beta,
     )
@@ -280,6 +296,9 @@ def main():
 
     def save_best_fn(policy):
         torch.save(policy.state_dict(), os.path.join(tb_log_path, "policy.pth"))
+        default = lambda o: f"<<non-serializable: {type(o).__qualname__}>>"
+        with open(os.path.join(tb_log_path, 'args.json'), 'w') as fp:
+            json.dump(args.__dict__, fp, indent=2, default=default)
 
     def stop_fn(mean_rewards: float) -> bool:
         return False
