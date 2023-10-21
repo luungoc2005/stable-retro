@@ -1,8 +1,11 @@
 import numpy as np
 import gymnasium as gym
+import random
 from collections import deque
 from retro.examples.discretizer import Discretizer
 import cv2
+
+INITIAL_KEY = '_INITIAL'
 
 class StreetFighter2Discretizer(Discretizer):
     """
@@ -62,6 +65,40 @@ class SuperHangOnDiscretizer(Discretizer):
             ['C', 'LEFT'],
             ['C', 'RIGHT']
         ])
+
+class SuperHangOnStageSaver(gym.Wrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        self.saved_states = {}
+
+    def reset(self, **kwargs):
+        self.stage = 0
+        self.prev_time = 0
+        if INITIAL_KEY not in self.saved_states and self.unwrapped.initial_state:
+            self.saved_states[INITIAL_KEY] = self.unwrapped.initial_state
+        if len(self.saved_states) > 0:
+            picked_state = random.choice(list(self.saved_states.keys()))
+            self.unwrapped.initial_state = self.saved_states[picked_state]
+        
+        return self.env.reset(**kwargs)
+    
+    def add_state(self, statename):
+        if statename not in self.saved_states:
+            self.saved_states[statename] = self.unwrapped.get_state()
+            print(f'Saved new state {statename}')
+
+    def step(self, action):
+        ob, rew, terminated, truncated, info = self.env.step(action)
+
+        if 'time' in info:
+            curr_time = info['time']
+            if self.prev_time > 0 and curr_time > self.prev_time: # timer increased
+                self.stage += 1
+                save_key = f'state_{self.stage}'
+                self.add_state(save_key)
+            self.prev_time = info['time']
+
+        return ob, rew, terminated, truncated, info 
 
 class NeedForSpeedDiscretizer(Discretizer):
     def __init__(self, env):
@@ -271,8 +308,8 @@ class WarpFrame(gym.ObservationWrapper):
             return np.transpose(frame, (2, 0, 1))
         return frame
 
-DISCRETIZER_CLASS = {
-    'NeedForSpeedCarbon-GBA': NeedForSpeedDiscretizer,
-    'StreetFighterIISpecialChampionEdition-Genesis': StreetFighter2Discretizer,
-    'SuperHangOn-Genesis': SuperHangOnDiscretizer,
+GAME_WRAPPERS = {
+    'NeedForSpeedCarbon-GBA': [NeedForSpeedDiscretizer],
+    'StreetFighterIISpecialChampionEdition-Genesis': [StreetFighter2Discretizer, StreetFighterFlipEnvWrapper],
+    'SuperHangOn-Genesis': [SuperHangOnDiscretizer, SuperHangOnStageSaver],
 }

@@ -363,6 +363,9 @@ class RetroEnv(gym.Env, EzPickle):
 
         self.statename = statename
 
+    def get_state(self):
+        return self.em.get_state()
+
     def compute_step(self):
         """Compute reward, done flag, and info dictionary from current RAM data."""
         if self.players > 1 and self.multi_rewards:
