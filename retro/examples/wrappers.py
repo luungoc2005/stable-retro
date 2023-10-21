@@ -170,7 +170,11 @@ class FrameStack(gym.Wrapper):
         super().__init__(env)
         self.n_frames = n_frames
         self.frames = deque([], maxlen=n_frames)
-        shape = (n_frames, *env.observation_space.shape)
+        obs_space = env.observation_space.shape
+        if len(obs_space) == 2:
+            shape = (n_frames, *obs_space)
+        else:
+            shape = (n_frames * obs_space[0], *obs_space[1:])
         self.observation_space = gym.spaces.Box(
             low=np.min(env.observation_space.low),
             high=np.max(env.observation_space.high),
@@ -200,7 +204,10 @@ class FrameStack(gym.Wrapper):
     def _get_ob(self):
         # the original wrapper use `LazyFrames` but since we use np buffer,
         # it has no effect
-        return np.stack(self.frames, axis=0)
+        obs = np.stack(self.frames, axis=0)
+        if len(obs.shape) == 4:
+            obs = np.reshape(obs, (obs.shape[0] * obs.shape[1], *obs.shape[2:]))
+        return obs
     
 
 class ScaledFloatFrame(gym.ObservationWrapper):
@@ -231,17 +238,22 @@ class WarpFrame(gym.ObservationWrapper):
     :param gym.Env env: the environment to wrap.
     """
 
-    def __init__(self, env):
+    def __init__(self, env, grayscale=True):
         super().__init__(env)
-        self.size = 84
+        self.size = 96
+        self.grayscale = grayscale
         self.observation_space = gym.spaces.Box(
             low=np.min(env.observation_space.low),
             high=np.max(env.observation_space.high),
-            shape=(self.size, self.size),
+            shape=(self.size, self.size) if grayscale else (3, self.size, self.size),
             dtype=env.observation_space.dtype,
         )
 
     def observation(self, frame):
         """Returns the current observation from a frame."""
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        return cv2.resize(frame, (self.size, self.size), interpolation=cv2.INTER_AREA)
+        if self.grayscale:
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        frame = cv2.resize(frame, (self.size, self.size), interpolation=cv2.INTER_AREA)
+        if len(frame.shape) == 3:
+            return np.transpose(frame, (2, 0, 1))
+        return frame
