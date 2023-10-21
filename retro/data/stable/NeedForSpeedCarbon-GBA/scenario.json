@@ -2,7 +2,7 @@
   "done": {
     "variables": {
       "screen": {
-        "op": "equal",
+        "op": "not-equal",
         "reference": 1
       }
     }

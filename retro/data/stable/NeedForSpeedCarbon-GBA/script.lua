@@ -6,8 +6,8 @@ function speed_reward()
   prev_speed = current_speed
 
   if data.reverse > 0 then
-    return -prev_speed
+    return - math.max(1, speed_delta)
   else
-    return prev_speed
+    return speed_delta
   end
 end

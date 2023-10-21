@@ -63,6 +63,19 @@ class SuperHangOnDiscretizer(Discretizer):
             ['C', 'RIGHT']
         ])
 
+class NeedForSpeedDiscretizer(Discretizer):
+    def __init__(self, env):
+        super().__init__(env=env, combos=[
+            ['A'],
+            ['A', 'LEFT'],
+            ['A', 'RIGHT'],
+            ['B'],
+            ['B', 'LEFT'],
+            ['B', 'RIGHT'],
+            ['A', 'L'],
+            ['A', 'R'],
+        ])
+
 class StreetFighterFlipEnvWrapper(gym.Wrapper):
     def __init__(self, env):
         self.env = env
@@ -257,3 +270,9 @@ class WarpFrame(gym.ObservationWrapper):
         if len(frame.shape) == 3:
             return np.transpose(frame, (2, 0, 1))
         return frame
+
+DISCRETIZER_CLASS = {
+    'NeedForSpeedCarbon-GBA': NeedForSpeedDiscretizer,
+    'StreetFighterIISpecialChampionEdition-Genesis': StreetFighter2Discretizer,
+    'SuperHangOn-Genesis': SuperHangOnDiscretizer,
+}
