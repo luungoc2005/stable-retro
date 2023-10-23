@@ -6,19 +6,20 @@ import retro
 import argparse
 import os
 import pprint
+import random
 from tianshou.utils.net.discrete import NoisyLinear
 from gymnasium import spaces
 from typing import Any, List, Union, cast
 from gymnasium.wrappers.time_limit import TimeLimit
 from stable_baselines3.common.monitor import Monitor
 from retro.examples.wrappers import (
-    StreetFighterFlipEnvWrapper,
     StochasticFrameSkip,
     ActionBias,
     FrameStack,
     ScaledFloatFrame,
     WarpFrame,
     GAME_WRAPPERS,
+    GAME_STATES,
 )
 from retro.examples.impala_cnn import ConvSequence
 from torch.utils.tensorboard import SummaryWriter
@@ -186,13 +187,20 @@ def wrap_deepmind_retro(env, grayscale=True):
     return env
 
 def make_env(args, render_mode="human"):
+    if args.game in GAME_STATES:
+        all_states = GAME_STATES[args.game]
+        state = random.choice(all_states)
+        print(f"Starting new env with state={state}")
+    else:
+        state = args.state
     env = make_retro(
         game=args.game, 
-        state=args.state, 
+        state=state, 
         scenario=args.scenario, 
         action_bias=args.action_bias, 
-        frame_skip=not args.no_frame_skip, 
-        render_mode=render_mode
+        frame_skip=not args.no_frame_skip,
+        max_episode_steps=args.max_episode_steps,
+        render_mode=render_mode,
     )
     env = wrap_deepmind_retro(env, grayscale=not args.no_grayscale)
     return env
@@ -214,6 +222,7 @@ def main():
     parser.add_argument("--epoch", type=int, default=100)
     parser.add_argument("--step-per-epoch", type=int, default=100000)
     parser.add_argument("--step-per-collect", type=int, default=10)
+    parser.add_argument("--max-episode-steps", type=int, default=10000)
     parser.add_argument("--update-per-step", type=float, default=0.1)
     parser.add_argument("--training-num", type=int, default=8)
     parser.add_argument("--alpha", type=float, default=0.5)
