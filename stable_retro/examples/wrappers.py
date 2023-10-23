@@ -3,6 +3,7 @@ import gymnasium as gym
 import random
 from collections import deque
 from retro.examples.discretizer import Discretizer
+from stable_baselines3.common.atari_wrappers import ClipRewardEnv
 import cv2
 
 INITIAL_KEY = '_INITIAL'
@@ -309,7 +310,17 @@ class WarpFrame(gym.ObservationWrapper):
         return frame
 
 GAME_WRAPPERS = {
-    'NeedForSpeedCarbon-GBA': [NeedForSpeedDiscretizer],
+    'NeedForSpeedCarbon-GBA': [NeedForSpeedDiscretizer, ClipRewardEnv],
     'StreetFighterIISpecialChampionEdition-Genesis': [StreetFighter2Discretizer, StreetFighterFlipEnvWrapper],
     'SuperHangOn-Genesis': [SuperHangOnDiscretizer, SuperHangOnStageSaver],
+}
+
+GAME_STATES = {
+    'NeedForSpeedCarbon-GBA': [
+        '3LapsHardDifficulty.state',
+        '3LapsNormalDifficulty.state',
+        '3LapsNormalDifficulty2.state',
+        '3LapsNormalDifficulty3.state',
+        '3LapsNormalDifficulty4.state',
+    ]
 }
