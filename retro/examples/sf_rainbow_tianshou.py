@@ -79,9 +79,9 @@ class VisEncoderImpala(nn.Module):
         conv_seqs += [
             nn.Flatten(),
             nn.LeakyReLU(),
-            nn.Linear(in_features=shape[0] * shape[1] * shape[2], out_features=256),
+            nn.Linear(in_features=shape[0] * shape[1] * shape[2], out_features=output_dim),
             nn.LeakyReLU(),
-            nn.Linear(in_features=256, out_features=output_dim),
+            nn.Linear(in_features=output_dim, out_features=output_dim),
         ]
         self.network = nn.Sequential(*conv_seqs)
 
@@ -185,6 +185,18 @@ def wrap_deepmind_retro(env, grayscale=True):
     # env = ClipRewardEnv(env)
     return env
 
+def make_env(args, render_mode="human"):
+    env = make_retro(
+        game=args.game, 
+        state=args.state, 
+        scenario=args.scenario, 
+        action_bias=args.action_bias, 
+        frame_skip=not args.no_frame_skip, 
+        render_mode=render_mode
+    )
+    env = wrap_deepmind_retro(env, grayscale=not args.no_grayscale)
+    return env
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--game", default=GAME_NAME)
@@ -219,26 +231,17 @@ def main():
     args = parser.parse_args()
     print(args)
 
-    def make_env(render_mode="human"):
-        env = make_retro(
-            game=args.game, 
-            state=args.state, 
-            scenario=args.scenario, 
-            action_bias=args.action_bias, 
-            frame_skip=not args.no_frame_skip, 
-            render_mode=render_mode
-        )
-        env = wrap_deepmind_retro(env, grayscale=not args.no_grayscale)
-        return env
+    def _make_env():
+        return make_env(args)
 
-    dummy_env = make_env()
+    dummy_env = _make_env()
     observation_space, action_space = dummy_env.observation_space, dummy_env.action_space
     model = RainbowNet(observation_space, action_space, use_impala=args.impala).to(args.device)
     torch.compile(model, backend="aot_eager")
     dummy_env.close()
     del dummy_env
 
-    venv = ShmemVectorEnv([make_env] * args.training_num)
+    venv = ShmemVectorEnv([_make_env] * args.training_num)
     tb_log_name = f"ppo-{args.game}"
     if args.no_frame_skip:
         tb_log_name += "-NoSkip"
