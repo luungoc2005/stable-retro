@@ -44,26 +44,30 @@ DEFAULT_HYPERPARAMS = {
 CUSTOM_HYPERPARAMS = {
     "StreetFighterIISpecialChampionEdition-Genesis": {
         "learning_rate": 1e-4,
-        "n_steps": 64,
+        "n_steps": 128,  # Increased from 64 for better sample efficiency
         "batch_size": 512,
         "n_epochs": 5,
-        "gamma": 0.995,
+        "gamma": 0.99,  # Reduced from 0.995 to focus more on immediate rewards (aggression)
         "gae_lambda": 0.95,
         "clip_range": 0.2,
-        "ent_coef": 0.005,
+        "ent_coef": 0.01,  # Increased from 0.005 to encourage exploration
         "max_grad_norm": 0.9,
         "vf_coef": 0.85,
     }
 }
 
-def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_skip=True, discrete=False, **kwargs):
+def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_skip=True, discrete=False, flip_augment=False, **kwargs):
     if state is None:
         state = retro.State.DEFAULT
     env = retro.make(game, state, **kwargs)
 
     if game in GAME_WRAPPERS:
         for _wrapper in GAME_WRAPPERS[game]:
-            env = _wrapper(env)
+            # Apply flip augmentation if requested
+            if _wrapper == StreetFighterFlipEnvWrapper and flip_augment:
+                env = _wrapper(env, always_flip=True)
+            else:
+                env = _wrapper(env)
 
     if action_bias != '':
         action_bias_list = []
@@ -104,6 +108,7 @@ def main():
     parser.add_argument("--action-bias", default='0 0 0 0 0 0 0 0 0 0 0 0')
     parser.add_argument("--no-frame-skip", action='store_true')
     parser.add_argument("--scenario", default=None)
+    parser.add_argument("--flip-augment", action='store_true', help='Enable flip augmentation for better reverse side handling')
     args = parser.parse_args()
     print(args)
 
@@ -115,6 +120,7 @@ def main():
             action_bias=args.action_bias, 
             frame_skip=not args.no_frame_skip, 
             discrete=args.discrete,
+            flip_augment=args.flip_augment,
             render_mode=render_mode
         )
         env = wrap_deepmind_retro(env)
@@ -151,6 +157,7 @@ def main():
 
         # save images
         import imageio
+        import os
         images = []
 
         new_venv = VecTransposeImage(VecFrameStack(SubprocVecEnv([lambda: make_env(render_mode="rgb_array")] * 9, start_method="spawn"), n_stack=4))
@@ -164,30 +171,8 @@ def main():
             obs, _, _ ,_ = new_venv.step(action)
             img = new_venv.render(mode="rgb_array")
 
+        os.makedirs("gifs", exist_ok=True)
         imageio.mimsave(f"gifs/{tb_log_name}.gif", [np.array(img) for i, img in enumerate(images) if i%2 == 0], duration=total_frames // 29)
-
-
-    kwargs = DEFAULT_HYPERPARAMS.copy()
-    # Sample hyperparameters.
-    if args.game in CUSTOM_HYPERPARAMS:
-        print("Using custom hparams")
-        hparams = CUSTOM_HYPERPARAMS[args.game]
-        activation_fn = hparams["activation_fn"]
-        del hparams["activation_fn"]
-        kwargs.update(hparams)
-        activation_fn = {"tanh": nn.Tanh, "relu": nn.ReLU}[activation_fn]
-        kwargs["policy_kwargs"] = dict(
-            activation_fn=activation_fn,
-        )
-
-    kwargs["env"] = venv
-    # Create the RL model.
-    model = PPO(**kwargs)
-    if args.resume:
-        import os
-        model_path = tb_log_name + ".zip"
-        if os.path.exists(model_path):
-            model = PPO.load(model_path, venv, print_system_info=True)
 
     try:
         model.learn(

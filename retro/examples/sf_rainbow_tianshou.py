@@ -209,6 +209,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--game", default=GAME_NAME)
     parser.add_argument("--resume", action='store_true')
+    parser.add_argument("--watch", action='store_true', help='Watch a trained agent without training')
+    parser.add_argument("--checkpoint", type=str, default=None, help='Path to checkpoint directory to load')
     parser.add_argument("--impala", action='store_true', default=False)
     parser.add_argument("--state", default=retro.State.DEFAULT)
     parser.add_argument("--action-bias", default='0 0 0 0 0 0 0 0 0 0 0 0')
@@ -250,22 +252,51 @@ def main():
     dummy_env.close()
     del dummy_env
 
+    # Determine checkpoint path
+    checkpoint_dir = args.checkpoint
+    if args.resume and checkpoint_dir is None:
+        # Find the latest checkpoint directory
+        base_path = f"tb_logs_tianshou/ppo-{args.game}"
+        if args.no_frame_skip:
+            base_path += "-NoSkip"
+        if args.no_grayscale:
+            base_path += "-rgb"
+        if args.impala:
+            base_path += "-impala"
+        
+        # Find latest run
+        import glob
+        matching_dirs = glob.glob(f"{base_path}*")
+        if matching_dirs:
+            checkpoint_dir = max(matching_dirs, key=os.path.getmtime)
+            print(f"Resuming from: {checkpoint_dir}")
+        else:
+            print(f"No checkpoint found, starting fresh")
+            args.resume = False
+
     venv = ShmemVectorEnv([_make_env] * args.training_num)
-    tb_log_name = f"ppo-{args.game}"
-    if args.no_frame_skip:
-        tb_log_name += "-NoSkip"
-    if args.no_grayscale:
-        tb_log_name += "-rgb"
-    if args.impala:
-        tb_log_name += "-impala"
-    tb_log_path = f"tb_logs_tianshou/{tb_log_name}"
-    increment = -1
-    def get_final_path():
-        return (tb_log_path + f"_{increment}") if increment > -1 else tb_log_path
-    while os.path.exists(get_final_path()):
-        increment += 1
-    tb_log_path = get_final_path()
-    print(f"Saving experiment into {tb_log_path}")
+    
+    if args.resume and checkpoint_dir:
+        tb_log_path = checkpoint_dir
+        print(f"Resuming experiment from {tb_log_path}")
+    else:
+        tb_log_name = f"ppo-{args.game}"
+        if args.no_frame_skip:
+            tb_log_name += "-NoSkip"
+        if args.no_grayscale:
+            tb_log_name += "-rgb"
+        if args.impala:
+            tb_log_name += "-impala"
+        tb_log_path = f"tb_logs_tianshou/{tb_log_name}"
+        increment = -1
+        def get_final_path():
+            return (tb_log_path + f"_{increment}") if increment > -1 else tb_log_path
+        while os.path.exists(get_final_path()):
+            increment += 1
+        tb_log_path = get_final_path()
+        print(f"Saving experiment into {tb_log_path}")
+    
+    os.makedirs(tb_log_path, exist_ok=True)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
@@ -280,6 +311,13 @@ def main():
         target_update_freq=args.target_update_freq,
     ).to(args.device)
 
+    # Load checkpoint if exists
+    if checkpoint_dir and os.path.exists(os.path.join(checkpoint_dir, "policy.pth")):
+        checkpoint_path = os.path.join(checkpoint_dir, "policy.pth")
+        print(f"Loading checkpoint from {checkpoint_path}")
+        policy.load_state_dict(torch.load(checkpoint_path, map_location=args.device))
+        print("Checkpoint loaded successfully")
+
     stack_num = 4
     if args.no_grayscale:
         stack_num *= 3
@@ -292,6 +330,19 @@ def main():
         alpha=args.alpha,
         beta=args.beta,
     )
+
+    # If watch mode, just watch and exit
+    if args.watch:
+        print("Watch mode: Testing agent performance...")
+        policy.eval()
+        policy.set_eps(args.eps_test)
+        test_collector = Collector(policy, venv, exploration_noise=True)
+        result = test_collector.collect(n_episode=args.training_num, render=1.0/30.0)
+        pprint.pprint(result)
+        rew = result["rews"].mean()
+        print(f"Mean reward (over {result['n/ep']} episodes): {rew}")
+        venv.close()
+        return
 
     train_collector = Collector(policy, venv, buffer, exploration_noise=True)
     test_collector = Collector(policy, venv, exploration_noise=True)
@@ -307,6 +358,27 @@ def main():
         default = lambda o: f"<<non-serializable: {type(o).__qualname__}>>"
         with open(os.path.join(tb_log_path, 'args.json'), 'w') as fp:
             json.dump(args.__dict__, fp, indent=2, default=default)
+        print(f"Saved best policy to {tb_log_path}/policy.pth")
+    
+    def save_checkpoint_fn(epoch, env_step, gradient_step):
+        # Save periodic checkpoints
+        checkpoint_path = os.path.join(tb_log_path, f"checkpoint_epoch_{epoch}.pth")
+        torch.save({
+            'epoch': epoch,
+            'env_step': env_step,
+            'gradient_step': gradient_step,
+            'policy_state_dict': policy.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+        }, checkpoint_path)
+        print(f"Saved checkpoint to {checkpoint_path}")
+        # Keep only last 3 checkpoints
+        import glob
+        checkpoints = sorted(glob.glob(os.path.join(tb_log_path, "checkpoint_epoch_*.pth")))
+        if len(checkpoints) > 3:
+            for old_checkpoint in checkpoints[:-3]:
+                os.remove(old_checkpoint)
+                print(f"Removed old checkpoint: {old_checkpoint}")
+        return checkpoint_path
 
     def stop_fn(mean_rewards: float) -> bool:
         return False
@@ -344,6 +416,7 @@ def main():
         test_fn=test_fn,
         stop_fn=stop_fn,
         save_best_fn=save_best_fn,
+        save_checkpoint_fn=save_checkpoint_fn,
         logger=logger,
         update_per_step=args.update_per_step,
         test_in_train=False,
@@ -359,13 +432,14 @@ def main():
 
         print("Testing agent ...")
         test_collector.reset()
-        result = test_collector.collect(n_episode=args.training_num, render=True)
+        result = test_collector.collect(n_episode=args.training_num, render=1.0/30.0)
 
         pprint.pprint(result)
         rew = result["rews"].mean()
         print(f"Mean reward (over {result['n/ep']} episodes): {rew}")
     
     watch()
+    venv.close()
 
 if __name__ == '__main__':
     main()

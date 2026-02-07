@@ -115,27 +115,58 @@ class NeedForSpeedDiscretizer(Discretizer):
         ])
 
 class StreetFighterFlipEnvWrapper(gym.Wrapper):
-    def __init__(self, env):
+    """
+    Improved wrapper that normalizes the observation and actions so the agent 
+    always sees itself on the left side, making it direction-agnostic
+    """
+    def __init__(self, env, always_flip=False):
+        super().__init__(env)
         self.env = env
         self.flipped = False
-        self.left_idx, self.right_idx = env.buttons.index("LEFT"), env.buttons.index("RIGHT")
+        self.always_flip = always_flip  # For data augmentation during training
+        self.left_idx = env.buttons.index("LEFT")
+        self.right_idx = env.buttons.index("RIGHT")
+        self.rng = np.random.RandomState()
+
+    def reset(self, **kwargs):
+        # Randomly decide to flip for data augmentation
+        if self.always_flip:
+            self.flip_augment = self.rng.rand() > 0.5
+        else:
+            self.flip_augment = False
+        self.flipped = False
+        return self.env.reset(**kwargs)
 
     def step(self, action):
+        # Make a copy to avoid modifying the original action
+        action_to_send = action.copy()
+        
+        # Apply flip augmentation if enabled
+        if self.flip_augment:
+            action_to_send[self.left_idx], action_to_send[self.right_idx] = \
+                action_to_send[self.right_idx], action_to_send[self.left_idx]
+        
+        # Apply actual flip based on game state
         if self.flipped:
-            # flip left and right keys
-            action[self.left_idx], action[self.right_idx] = action[self.right_idx], action[self.left_idx]
+            action_to_send[self.left_idx], action_to_send[self.right_idx] = \
+                action_to_send[self.right_idx], action_to_send[self.left_idx]
 
-        _obs, reward, done, truncated, info = self.env.step(action)
+        _obs, reward, done, truncated, info = self.env.step(action_to_send)
 
+        # Determine if we need to flip based on positions
         obs = _obs
-        if 'agent_x' in info and info['agent_x'] > info['enemy_x']: # flipped
-            self.flipped = True
-            obs = np.flip(_obs, axis=1)
-            # # debugging
-            # self.env.img = obs
-        else:
-            self.flipped = False
-
+        if 'agent_x' in info and 'enemy_x' in info:
+            should_flip = info['agent_x'] > info['enemy_x']
+            
+            # Apply flip augmentation on top
+            if self.flip_augment:
+                should_flip = not should_flip
+            
+            self.flipped = should_flip
+            
+            if self.flipped:
+                obs = np.flip(_obs, axis=1)
+        
         return obs, reward, done, truncated, info
 
 
@@ -310,8 +341,8 @@ class WarpFrame(gym.ObservationWrapper):
         return frame
 
 GAME_WRAPPERS = {
-    'NeedForSpeedCarbon-GBA': [NeedForSpeedDiscretizer, ClipRewardEnv],
-    'StreetFighterIISpecialChampionEdition-Genesis': [StreetFighter2Discretizer, StreetFighterFlipEnvWrapper],
+    'NeedForSpeedCarbon-GBA': [NeedForSpeedDiscretizer],
+    'StreetFighterIISpecialChampionEdition-Genesis': [StreetFighterFlipEnvWrapper, StreetFighter2Discretizer],
     'SuperHangOn-Genesis': [SuperHangOnDiscretizer, SuperHangOnStageSaver],
 }
 

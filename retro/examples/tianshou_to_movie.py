@@ -80,7 +80,7 @@ def main():
         action = policy(Batch(obs=np.array(obs), info=None)).act
         action_array = discretizer_env._decode_discrete_action[int(action)]
         action_meaning = vec_env.envs[0].unwrapped.get_action_meaning([1 if item > 0 else 0 for item in action_array])
-        print(f"Step {i}: {action_meaning}\r", end="")
+        print(f"\rStep {i}: {action_meaning}\033[K", end="")
         obs, _, done ,info = vec_env.step(action)
         total_frames += 1
         if np.all(done):
