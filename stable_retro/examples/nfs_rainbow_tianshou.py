@@ -1,0 +1,459 @@
+"""
+Rainbow DQN training script for NeedForSpeedCarbon-GBA using Tianshou.
+
+Key differences from the generic sf_rainbow_tianshou.py:
+- Defaults tuned for NFS racing (reward scale, v-min/v-max, exploration, etc.)
+- Reward comes from Lua script rewarding absolute speed + speed changes
+- Frame skip sums rewards (not averages)
+- Expanded action space with coasting and pure steering
+
+Usage:
+    python -m stable_retro.examples.nfs_rainbow_tianshou                     # Train
+    python -m stable_retro.examples.nfs_rainbow_tianshou --watch --checkpoint <path>  # Watch
+    python -m stable_retro.examples.nfs_rainbow_tianshou --resume            # Resume training
+"""
+import stable_retro.examples.tianshou_patch as tianshou_patch
+import torch
+import torch.nn as nn
+import numpy as np
+import stable_retro as retro
+import argparse
+import os
+import pprint
+import random
+import glob
+import json
+from tianshou.utils.net.discrete import NoisyLinear
+from gymnasium import spaces
+from typing import Any
+from gymnasium.wrappers import TimeLimit
+from stable_baselines3.common.monitor import Monitor
+from stable_retro.examples.wrappers import (
+    StochasticFrameSkip,
+    ActionBias,
+    FrameStack,
+    ScaledFloatFrame,
+    WarpFrame,
+    GAME_WRAPPERS,
+    GAME_STATES,
+    resolve_game,
+)
+from stable_retro.examples.impala_cnn import ConvSequence
+from torch.utils.tensorboard import SummaryWriter
+
+from tianshou.env import ShmemVectorEnv
+from tianshou.data import Collector, CollectStats, PrioritizedVectorReplayBuffer
+from tianshou.algorithm.modelfree.c51 import C51Policy
+from tianshou.algorithm.modelfree.rainbow import RainbowDQN
+from tianshou.algorithm.optim import TorchOptimizerFactory
+from tianshou.trainer import OffPolicyTrainerParams
+from tianshou.utils import TensorboardLogger
+
+GAME_NAME = "NeedForSpeedCarbon-GBA"
+
+
+def layer_init(layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
+    torch.nn.init.orthogonal_(layer.weight, std)
+    torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
+
+
+class VisEncoder(nn.Module):
+    def __init__(self, c, h, w, output_dim):
+        super().__init__()
+        cnn_encoder = nn.Sequential(
+            layer_init(nn.Conv2d(c, 32, kernel_size=8, stride=4)),
+            nn.LeakyReLU(inplace=True),
+            layer_init(nn.Conv2d(32, 64, kernel_size=4, stride=2)),
+            nn.LeakyReLU(inplace=True),
+            layer_init(nn.Conv2d(64, 64, kernel_size=3, stride=1)),
+            nn.LeakyReLU(inplace=True),
+            nn.Flatten(),
+        )
+        with torch.no_grad():
+            self.output_dim = int(np.prod(cnn_encoder(torch.zeros(1, c, h, w)).shape[1:]))
+        self.net = nn.Sequential(
+            cnn_encoder,
+            layer_init(nn.Linear(self.output_dim, output_dim)),
+            nn.LeakyReLU(inplace=True),
+        )
+        self._next_param = self.net.parameters().__next__()
+
+    def forward(self, obs) -> torch.Tensor:
+        obs = torch.as_tensor(obs, dtype=self._next_param.dtype, device=self._next_param.device)
+        return self.net(obs)
+
+
+class VisEncoderImpala(nn.Module):
+    def __init__(self, c, h, w, output_dim):
+        super().__init__()
+        shape = (c, h, w)
+        conv_seqs = []
+        for out_channels in [16, 32, 32]:
+            conv_seq = ConvSequence(shape, out_channels)
+            shape = conv_seq.get_output_shape()
+            conv_seqs.append(conv_seq)
+
+        conv_seqs += [
+            nn.Flatten(),
+            nn.LeakyReLU(),
+            nn.Linear(in_features=shape[0] * shape[1] * shape[2], out_features=output_dim),
+            nn.LeakyReLU(),
+            nn.Linear(in_features=output_dim, out_features=output_dim),
+        ]
+        self.network = nn.Sequential(*conv_seqs)
+        self._next_param = self.network.parameters().__next__()
+
+    def forward(self, obs) -> torch.Tensor:
+        obs = torch.as_tensor(obs, dtype=self._next_param.dtype, device=self._next_param.device)
+        return self.network(obs)
+
+
+class RainbowNet(nn.Module):
+    def __init__(self, observation_space: spaces.Space, action_space: spaces.MultiBinary,
+                 num_atoms: int = 51, is_noisy: bool = True, use_impala=False):
+        super().__init__()
+        c, h, w = observation_space.shape[:3]
+        self.action_num = action_space.n
+        self.num_atoms = num_atoms
+        hidden_dim = 512
+
+        if use_impala:
+            self.encoder = VisEncoderImpala(c, h, w, hidden_dim)
+        else:
+            self.encoder = VisEncoder(c, h, w, hidden_dim)
+
+        def linear(x, y):
+            if is_noisy:
+                return NoisyLinear(x, y, 0.5)
+            return nn.Linear(x, y)
+
+        self.Q = nn.Sequential(
+            linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(inplace=True),
+            linear(hidden_dim, self.action_num * self.num_atoms),
+        )
+        self.V = nn.Sequential(
+            linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(inplace=True),
+            linear(hidden_dim, self.num_atoms),
+        )
+        self.output_dim = self.action_num * self.num_atoms
+
+    def forward(
+        self,
+        obs: np.ndarray | torch.Tensor,
+        state: Any | None = None,
+        info: dict[str, Any] | None = None,
+    ) -> tuple[torch.Tensor, Any]:
+        x = self.encoder(obs)
+        q = self.Q(x)
+        q = q.view(-1, self.action_num, self.num_atoms)
+        v = self.V(x)
+        v = v.view(-1, 1, self.num_atoms)
+        logits: torch.Tensor = q - q.mean(dim=1, keepdim=True) + v
+        probs = logits.softmax(dim=2)
+        return probs, state
+
+
+def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_skip=True, **kwargs):
+    game = resolve_game(game)
+    if state is None:
+        state = retro.State.DEFAULT
+
+    env = retro.make(game, state, **kwargs)
+
+    if game in GAME_WRAPPERS:
+        for _wrapper in GAME_WRAPPERS[game]:
+            env = _wrapper(env)
+
+    if action_bias != '':
+        action_bias_list = []
+        if ',' in action_bias:
+            action_bias_list = action_bias.split(',')
+        else:
+            action_bias_list = action_bias.split(' ')
+        action_bias_list = [float(item.strip()) for item in action_bias_list]
+        action_meaning = env.unwrapped.get_action_meaning([1 if item > 0 else 0 for item in action_bias_list])
+        if len(action_meaning) > 0:
+            import warnings
+            warnings.warn(f"Action bias on: {action_meaning}")
+        env = ActionBias(env, action_bias_list)
+
+    if frame_skip:
+        env = StochasticFrameSkip(env, n=4, stickprob=0.25)
+
+    if max_episode_steps > 0:
+        env = TimeLimit(env, max_episode_steps=max_episode_steps)
+
+    return env
+
+
+def wrap_deepmind_retro(env, grayscale=True):
+    env = Monitor(env)
+    env = WarpFrame(env, grayscale=grayscale)
+    env = ScaledFloatFrame(env)
+    env = FrameStack(env, 4)
+    return env
+
+
+def make_env(args, render_mode=None):
+    if resolve_game(args.game) in GAME_STATES:
+        all_states = GAME_STATES[resolve_game(args.game)]
+        state = random.choice(all_states)
+        print(f"Starting new env with state={state}")
+    else:
+        state = args.state
+    env = make_retro(
+        game=args.game,
+        state=state,
+        scenario=args.scenario,
+        action_bias=args.action_bias,
+        frame_skip=not args.no_frame_skip,
+        max_episode_steps=args.max_episode_steps,
+        render_mode=render_mode,
+    )
+    env = wrap_deepmind_retro(env, grayscale=not args.no_grayscale)
+    return env
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Rainbow DQN for NeedForSpeedCarbon-GBA")
+    parser.add_argument("--game", default=GAME_NAME)
+    parser.add_argument("--resume", action='store_true')
+    parser.add_argument("--watch", action='store_true', help='Watch a trained agent without training')
+    parser.add_argument("--checkpoint", type=str, default=None, help='Path to checkpoint directory to load')
+    parser.add_argument("--impala", action='store_true', default=False)
+    parser.add_argument("--state", default=retro.State.DEFAULT)
+    parser.add_argument("--action-bias", default='0 0 0 0 0 0 0 0 0 0')
+    parser.add_argument("--no-frame-skip", action='store_true')
+    parser.add_argument("--no-grayscale", action='store_true', default=False)
+    parser.add_argument("--scenario", default=None)
+    # --- Tuned defaults for NFS ---
+    parser.add_argument("--buffer-size", type=int, default=100000)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--n-step", type=int, default=5,
+                        help="N-step return. Higher=longer credit assignment for racing.")
+    parser.add_argument("--target-update-freq", type=int, default=500)
+    parser.add_argument("--epoch", type=int, default=100)
+    parser.add_argument("--step-per-epoch", type=int, default=100000)
+    parser.add_argument("--step-per-collect", type=int, default=16)
+    parser.add_argument("--max-episode-steps", type=int, default=4500,
+                        help="~75 seconds of game time. Forces agent to learn to progress, not idle.")
+    parser.add_argument("--update-per-step", type=float, default=0.1)
+    parser.add_argument("--training-num", type=int, default=8)
+    parser.add_argument("--alpha", type=float, default=0.6)
+    parser.add_argument("--beta", type=float, default=0.4)
+    parser.add_argument("--beta-final", type=float, default=1.0)
+    parser.add_argument("--beta-anneal-step", type=int, default=5000000)
+    parser.add_argument("--eps-test", type=float, default=0.005)
+    parser.add_argument("--eps-train", type=float, default=1.0)
+    parser.add_argument("--eps-train-final", type=float, default=0.05)
+    parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--v-min", type=float, default=-10.0)
+    parser.add_argument("--v-max", type=float, default=10.0)
+    parser.add_argument("--lr", type=float, default=0.0001,
+                        help="Learning rate. Slightly higher than DQN default for faster convergence.")
+    parser.add_argument("--device", type=str, default='mps')
+    args = parser.parse_args()
+    print(args)
+
+    def _make_env():
+        return make_env(args)
+
+    dummy_env = _make_env()
+    observation_space, action_space = dummy_env.observation_space, dummy_env.action_space
+    print(f"Observation space: {observation_space.shape}")
+    print(f"Action space: {action_space} (n={action_space.n})")
+    model = RainbowNet(observation_space, action_space, use_impala=args.impala).to(args.device)
+    torch.compile(model, backend="aot_eager")
+    dummy_env.close()
+    del dummy_env
+
+    # Determine checkpoint path
+    checkpoint_dir = args.checkpoint
+    if args.resume and checkpoint_dir is None:
+        base_path = f"tb_logs_tianshou/rainbow-{args.game}"
+        if args.no_frame_skip:
+            base_path += "-NoSkip"
+        if args.no_grayscale:
+            base_path += "-rgb"
+        if args.impala:
+            base_path += "-impala"
+        matching_dirs = glob.glob(f"{base_path}*")
+        if matching_dirs:
+            checkpoint_dir = max(matching_dirs, key=os.path.getmtime)
+            print(f"Resuming from: {checkpoint_dir}")
+        else:
+            print(f"No checkpoint found, starting fresh")
+            args.resume = False
+
+    venv = ShmemVectorEnv([_make_env] * args.training_num)
+
+    if args.resume and checkpoint_dir:
+        tb_log_path = checkpoint_dir
+        print(f"Resuming experiment from {tb_log_path}")
+    else:
+        tb_log_name = f"rainbow-{args.game}"
+        if args.no_frame_skip:
+            tb_log_name += "-NoSkip"
+        if args.no_grayscale:
+            tb_log_name += "-rgb"
+        if args.impala:
+            tb_log_name += "-impala"
+        tb_log_path = f"tb_logs_tianshou/{tb_log_name}"
+        increment = -1
+        def get_final_path():
+            return (tb_log_path + f"_{increment}") if increment > -1 else tb_log_path
+        while os.path.exists(get_final_path()):
+            increment += 1
+        tb_log_path = get_final_path()
+        print(f"Saving experiment into {tb_log_path}")
+
+    os.makedirs(tb_log_path, exist_ok=True)
+
+    policy = C51Policy(
+        model=model,
+        action_space=action_space,
+        v_min=args.v_min,
+        v_max=args.v_max,
+        eps_training=args.eps_train,
+        eps_inference=args.eps_test,
+    )
+
+    # Load weights before creating the algorithm so its target network starts from them
+    algorithm_state = None
+    if checkpoint_dir and os.path.exists(os.path.join(checkpoint_dir, "policy.pth")):
+        checkpoint_path = os.path.join(checkpoint_dir, "policy.pth")
+        print(f"Loading checkpoint from {checkpoint_path}")
+        algorithm_state = tianshou_patch.load_policy_weights(policy, checkpoint_path, args.device)
+        print("Checkpoint loaded successfully")
+
+    algorithm = RainbowDQN(
+        policy=policy,
+        optim=TorchOptimizerFactory(torch.optim.AdamW, lr=args.lr, eps=1.5e-4),
+        gamma=args.gamma,
+        n_step_return_horizon=args.n_step,
+        target_update_freq=args.target_update_freq,
+    ).to(args.device)
+    if algorithm_state is not None:
+        # Also restores optimizer state and the target network
+        algorithm.load_state_dict(algorithm_state)
+
+    stack_num = 4
+    if args.no_grayscale:
+        stack_num *= 3
+    buffer = PrioritizedVectorReplayBuffer(
+        args.buffer_size,
+        buffer_num=args.training_num,
+        ignore_obs_next=True,
+        save_only_last_obs=True,
+        stack_num=stack_num,
+        alpha=args.alpha,
+        beta=args.beta,
+    )
+
+    # Watch mode: just evaluate and exit
+    if args.watch:
+        print("Watch mode: Testing agent performance...")
+        test_collector = Collector[CollectStats](algorithm, venv, exploration_noise=True)
+        result = test_collector.collect(n_episode=args.training_num, render=1.0 / 30.0)
+        result.pprint_asdict()
+        print(f"Mean reward (over {result.n_collected_episodes} episodes): {result.returns_stat.mean}")
+        venv.close()
+        return
+
+    train_collector = Collector[CollectStats](algorithm, venv, buffer, exploration_noise=True)
+    test_collector = Collector[CollectStats](algorithm, venv, exploration_noise=True)
+
+    # Pre-fill buffer with some random experience
+    print("Pre-filling replay buffer...")
+    train_collector.reset()
+    train_collector.collect(n_step=args.batch_size * args.training_num)
+    print(f"Buffer size after pre-fill: {len(buffer)}")
+
+    writer = SummaryWriter(tb_log_path)
+    writer.add_text("args", str(args))
+    logger = TensorboardLogger(writer)
+
+    def save_best_fn(algorithm):
+        torch.save(algorithm.state_dict(), os.path.join(tb_log_path, "policy.pth"))
+        default = lambda o: f"<<non-serializable: {type(o).__qualname__}>>"
+        with open(os.path.join(tb_log_path, 'args.json'), 'w') as fp:
+            json.dump(args.__dict__, fp, indent=2, default=default)
+        print(f"Saved best policy to {tb_log_path}/policy.pth")
+
+    def save_checkpoint_fn(epoch, env_step, gradient_step):
+        checkpoint_path = os.path.join(tb_log_path, f"checkpoint_epoch_{epoch}.pth")
+        torch.save({
+            'epoch': epoch,
+            'env_step': env_step,
+            'gradient_step': gradient_step,
+            'algorithm_state_dict': algorithm.state_dict(),
+        }, checkpoint_path)
+        print(f"Saved checkpoint to {checkpoint_path}")
+        # Keep only last 3 checkpoints
+        checkpoints = sorted(glob.glob(os.path.join(tb_log_path, "checkpoint_epoch_*.pth")))
+        if len(checkpoints) > 3:
+            for old_checkpoint in checkpoints[:-3]:
+                os.remove(old_checkpoint)
+                print(f"Removed old checkpoint: {old_checkpoint}")
+        return checkpoint_path
+
+    def stop_fn(mean_rewards: float) -> bool:
+        return False
+
+    def train_fn(epoch, env_step):
+        # Linear decay of exploration epsilon over first 1M steps
+        if env_step <= 1e6:
+            eps = args.eps_train - env_step / 1e6 * (args.eps_train - args.eps_train_final)
+        else:
+            eps = args.eps_train_final
+        policy.set_eps_training(eps)
+        if env_step % 1000 == 0:
+            logger.write("train/env_step", env_step, {"train/eps": eps})
+        # Linear anneal of PER beta
+        if env_step <= args.beta_anneal_step:
+            beta = args.beta - env_step / args.beta_anneal_step * (args.beta - args.beta_final)
+        else:
+            beta = args.beta_final
+        buffer.set_beta(beta)
+        if env_step % 1000 == 0:
+            logger.write("train/env_step", env_step, {"train/beta": beta})
+
+    print("Starting training...")
+    result = algorithm.run_training(
+        OffPolicyTrainerParams(
+            training_collector=train_collector,
+            test_collector=test_collector,
+            max_epochs=args.epoch,
+            epoch_num_steps=args.step_per_epoch,
+            collection_step_num_env_steps=args.step_per_collect,
+            test_step_num_episodes=args.training_num,
+            batch_size=args.batch_size,
+            training_fn=train_fn,
+            stop_fn=stop_fn,
+            save_best_fn=save_best_fn,
+            save_checkpoint_fn=save_checkpoint_fn,
+            logger=logger,
+            update_step_num_gradient_steps_per_sample=args.update_per_step,
+            test_in_training=False,
+        )
+    )
+
+    pprint.pprint(result)
+
+    # Final evaluation
+    def watch():
+        print("Final evaluation...")
+        test_collector.reset()
+        result = test_collector.collect(n_episode=args.training_num, render=1.0 / 30.0)
+        result.pprint_asdict()
+        print(f"Mean reward (over {result.n_collected_episodes} episodes): {result.returns_stat.mean}")
+
+    watch()
+    venv.close()
+
+
+if __name__ == '__main__':
+    main()

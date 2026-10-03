@@ -28,6 +28,26 @@ dynamic = ["version"]
 [project.optional-dependencies]
 dev = ["autopep8", "pre-commit", "pytest"]
 
+[dependency-groups]
+# Training / example scripts in stable_retro/examples
+rl = [
+	"torch",
+	"stable-baselines3[extra]",
+	"tianshou>=2",
+	"optuna",
+	"opencv-python",
+	"imageio[ffmpeg]",
+	"moviepy",
+	"tensorboard",
+]
+
+[tool.uv]
+default-groups = ["rl"]
+# tianshou 2 requires Python 3.11+
+environments = ["python_version >= '3.11'"]
+# pyglet 1.5.28+ crash when closing the window on macOS
+constraint-dependencies = ["pyglet==1.5.27"]
+
 [project.urls]
 Homepage = "https://github.com/Farama-Foundation/stable-retro"
 Repository = "https://github.com/Farama-Foundation/stable-retro"

@@ -19,7 +19,7 @@ fi
 echo "Loading trained agent and starting demo..."
 echo ""
 
-conda run -n rl python retro/examples/sf_rainbow_tianshou.py \
+uv run python stable_retro/examples/sf_rainbow_tianshou.py \
     --watch \
     --checkpoint "$CHECKPOINT_DIR" \
     --training-num 1 \

@@ -113,7 +113,7 @@ def check_env_helper(make_env, all_acts, verbose, out_success):
 
     for acts in in_acts:
         out_rews.append(rollout(env, acts))
-        out_rams.append(env.get_ram())
+        out_rams.append(env.unwrapped.get_ram())
         in_states.append(env.get_state())
 
     in_states.pop()  # remove extra final state since there are no actions after it
@@ -128,7 +128,7 @@ def check_env_helper(make_env, all_acts, verbose, out_success):
             if not np.array_equal(rollout(env, acts), out_rews[start_idx + offset]):
                 print("failed rew")
                 success = False
-            if not np.array_equal(env.get_ram(), out_rams[start_idx + offset]):
+            if not np.array_equal(env.unwrapped.get_ram(), out_rams[start_idx + offset]):
                 print("failed ram")
                 success = False
 
@@ -219,7 +219,7 @@ def main():
         while movie.step():
             act = []
             for p in range(movie.players):
-                for i in range(env.num_buttons):
+                for i in range(env.unwrapped.num_buttons):
                     act.append(movie.get_key(i, p))
             acts.append(act)
         env.close()

@@ -1,12 +1,14 @@
 import argparse
 import json
 import os
-import retro
+import stable_retro as retro
 import torch
 import numpy as np
 from tianshou.env import ShmemVectorEnv
-from retro.examples.sf_rainbow_tianshou import make_env, RainbowNet, RainbowPolicy
-from retro.examples.discretizer import Discretizer
+from tianshou.algorithm.modelfree.c51 import C51Policy
+from stable_retro.examples.sf_rainbow_tianshou import make_env, RainbowNet
+from stable_retro.examples.tianshou_patch import load_policy_weights
+from stable_retro.examples.discretizer import Discretizer
 from tianshou.data import Batch
 from stable_baselines3.common.vec_env import (
     VecVideoRecorder,
@@ -50,20 +52,16 @@ def main():
     env = _make_env()
     observation_space, action_space = env.observation_space, env.action_space
     model = RainbowNet(observation_space, action_space, use_impala=saved_args.impala).to(saved_args.device)
-    policy = RainbowPolicy(
+    policy = C51Policy(
         model=model,
-        optim=None,
         action_space=action_space,
-        discount_factor=saved_args.gamma,
         v_min=saved_args.v_min,
         v_max=saved_args.v_max,
-        estimation_step=saved_args.n_step,
-        target_update_freq=saved_args.target_update_freq,
     ).to(saved_args.device)
     env.close()
 
-    state_dict = torch.load(os.path.join(args.path, 'policy.pth'), map_location=saved_args.device)
-    policy.load_state_dict(state_dict)
+    load_policy_weights(policy, os.path.join(args.path, 'policy.pth'), saved_args.device)
+    policy.eval()
     
     vec_env = DummyVecEnv([_make_env])
     # find discretizer
@@ -78,7 +76,7 @@ def main():
     total_frames = 0
     for i in range(max_frames + 1):
         action = policy(Batch(obs=np.array(obs), info=None)).act
-        action_array = discretizer_env._decode_discrete_action[int(action)]
+        action_array = discretizer_env._decode_discrete_action[int(action[0])]
         action_meaning = vec_env.envs[0].unwrapped.get_action_meaning([1 if item > 0 else 0 for item in action_array])
         print(f"\rStep {i}: {action_meaning}\033[K", end="")
         obs, _, done ,info = vec_env.step(action)

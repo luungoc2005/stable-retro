@@ -16,14 +16,15 @@ from stable_baselines3.common.vec_env import (
     VecTransposeImage,
 )
 from stable_baselines3.common.monitor import Monitor
-from retro.examples.wrappers import (
+from stable_retro.examples.wrappers import (
     StreetFighterFlipEnvWrapper, 
     StochasticFrameSkip, 
     ActionBias,
     GAME_WRAPPERS,
+    resolve_game,
 )
 import torch.nn as nn
-from retro.examples.impala_cnn import ImpalaCNN
+from stable_retro.examples.impala_cnn import ImpalaCNN
 import stable_retro as retro
 
 
@@ -42,7 +43,7 @@ DEFAULT_HYPERPARAMS = {
     "tensorboard_log": "tb_logs",
 }
 CUSTOM_HYPERPARAMS = {
-    "StreetFighterIISpecialChampionEdition-Genesis": {
+    "StreetFighterIISpecialChampionEdition-Genesis-v0": {
         "learning_rate": 1e-4,
         "n_steps": 128,  # Increased from 64 for better sample efficiency
         "batch_size": 512,
@@ -57,6 +58,7 @@ CUSTOM_HYPERPARAMS = {
 }
 
 def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_skip=True, discrete=False, flip_augment=False, **kwargs):
+    game = resolve_game(game)
     if state is None:
         state = retro.State.DEFAULT
     env = retro.make(game, state, **kwargs)
@@ -76,7 +78,7 @@ def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_s
         else:
             action_bias_list = action_bias.split(' ')
         action_bias_list = [float(item.strip()) for item in action_bias_list]
-        action_meaning = env.get_action_meaning([1 if item > 0 else 0 for item in action_bias_list])
+        action_meaning = env.unwrapped.get_action_meaning([1 if item > 0 else 0 for item in action_bias_list])
         if len(action_meaning) > 0:
             import warnings
             warnings.warn(f"Action bias on: {action_meaning}")
@@ -134,9 +136,9 @@ def main():
 
     kwargs = DEFAULT_HYPERPARAMS.copy()
     # Sample hyperparameters.
-    if args.game in CUSTOM_HYPERPARAMS:
+    if resolve_game(args.game) in CUSTOM_HYPERPARAMS:
         print("Using custom hparams")
-        kwargs.update(CUSTOM_HYPERPARAMS[args.game])
+        kwargs.update(CUSTOM_HYPERPARAMS[resolve_game(args.game)])
     if args.cnn == 'impala':
         tb_log_name += '-impala'
         kwargs['policy_kwargs'] = {

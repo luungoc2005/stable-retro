@@ -7,7 +7,7 @@ import pprint
 
 import gymnasium as gym
 import numpy as np
-from gymnasium.wrappers.time_limit import TimeLimit
+from gymnasium.wrappers import TimeLimit
 from stable_baselines3 import PPO
 from stable_baselines3.common.atari_wrappers import ClipRewardEnv, WarpFrame
 from stable_baselines3.common.vec_env import (
@@ -16,8 +16,8 @@ from stable_baselines3.common.vec_env import (
     VecTransposeImage,
     VecVideoRecorder,
 )
-from retro.examples.wrappers import StreetFighterFlipEnvWrapper
-import retro
+from stable_retro.examples.wrappers import StreetFighterFlipEnvWrapper, resolve_game
+import stable_retro as retro
 
 
 class StochasticFrameSkip(gym.Wrapper):
@@ -62,6 +62,7 @@ class StochasticFrameSkip(gym.Wrapper):
 
 
 def make_retro(*, game, state=None, max_episode_steps=4500, **kwargs):
+    game = resolve_game(game)
     if state is None:
         state = retro.State.DEFAULT
     env = retro.make(game, state, render_mode="rgb_array", **kwargs)
@@ -90,7 +91,7 @@ def main():
 
     def make_env():
         env = make_retro(game=args.game, state=args.state, scenario=args.scenario)
-        if args.game == "StreetFighterIISpecialChampionEdition-Genesis":
+        if resolve_game(args.game) == "StreetFighterIISpecialChampionEdition-Genesis-v0":
             env = StreetFighterFlipEnvWrapper(env)
         env = wrap_deepmind_retro(env)
         return env

@@ -83,6 +83,7 @@ celerybeat-schedule
 
 # virtualenv
 venv/
+.venv/
 ENV/
 
 # Spyder project settings
@@ -167,3 +168,9 @@ third-party/libzip/regress/
 third-party/libzip/src/zipcmp
 third-party/libzip/src/zipmerge
 third-party/libzip/src/ziptool
+
+# Training artifacts
+*.zip
+*.pth
+*.bk2
+tb_logs/

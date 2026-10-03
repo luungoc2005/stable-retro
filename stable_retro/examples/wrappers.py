@@ -2,7 +2,16 @@ import numpy as np
 import gymnasium as gym
 import random
 from collections import deque
-from retro.examples.discretizer import Discretizer
+from stable_retro.examples.discretizer import Discretizer
+import stable_retro
+
+
+def resolve_game(game):
+    """Map a pre-v0 game name (e.g. from an old args.json) to its current ``-v0`` integration."""
+    if stable_retro.data.get_file_path(game, "rom.sha", stable_retro.data.Integrations.ALL) is None:
+        if stable_retro.data.get_file_path(game + "-v0", "rom.sha", stable_retro.data.Integrations.ALL):
+            return game + "-v0"
+    return game
 from stable_baselines3.common.atari_wrappers import ClipRewardEnv
 import cv2
 
@@ -104,14 +113,19 @@ class SuperHangOnStageSaver(gym.Wrapper):
 class NeedForSpeedDiscretizer(Discretizer):
     def __init__(self, env):
         super().__init__(env=env, combos=[
-            ['A'],
-            ['A', 'LEFT'],
-            ['A', 'RIGHT'],
-            ['B'],
-            ['B', 'LEFT'],
-            ['B', 'RIGHT'],
-            ['A', 'L'],
-            ['A', 'R'],
+            [],                  # 0: NOOP / coast
+            ['A'],               # 1: accelerate
+            ['A', 'LEFT'],       # 2: accelerate + steer left
+            ['A', 'RIGHT'],      # 3: accelerate + steer right
+            ['LEFT'],            # 4: steer left (coast) - critical for tight turns
+            ['RIGHT'],           # 5: steer right (coast)
+            ['B'],               # 6: brake
+            ['B', 'LEFT'],       # 7: brake + steer left
+            ['B', 'RIGHT'],      # 8: brake + steer right
+            ['A', 'L'],          # 9: accelerate + L (nitro/shift)
+            ['A', 'R'],          # 10: accelerate + R
+            ['A', 'LEFT', 'L'],  # 11: accelerate + left + L
+            ['A', 'RIGHT', 'R'], # 12: accelerate + right + R
         ])
 
 class StreetFighterFlipEnvWrapper(gym.Wrapper):
@@ -124,8 +138,8 @@ class StreetFighterFlipEnvWrapper(gym.Wrapper):
         self.env = env
         self.flipped = False
         self.always_flip = always_flip  # For data augmentation during training
-        self.left_idx = env.buttons.index("LEFT")
-        self.right_idx = env.buttons.index("RIGHT")
+        self.left_idx = env.unwrapped.buttons.index("LEFT")
+        self.right_idx = env.unwrapped.buttons.index("RIGHT")
         self.rng = np.random.RandomState()
 
     def reset(self, **kwargs):
@@ -208,7 +222,7 @@ class StochasticFrameSkip(gym.Wrapper):
             totrew += rew
             if terminated or truncated:
                 break
-        return ob, totrew / self.n, terminated, truncated, info
+        return ob, totrew, terminated, truncated, info
     
 
 class ActionBias(gym.Wrapper):
@@ -341,13 +355,13 @@ class WarpFrame(gym.ObservationWrapper):
         return frame
 
 GAME_WRAPPERS = {
-    'NeedForSpeedCarbon-GBA': [NeedForSpeedDiscretizer],
-    'StreetFighterIISpecialChampionEdition-Genesis': [StreetFighterFlipEnvWrapper, StreetFighter2Discretizer],
-    'SuperHangOn-Genesis': [SuperHangOnDiscretizer, SuperHangOnStageSaver],
+    'NeedForSpeedCarbon-GBA-v0': [NeedForSpeedDiscretizer],
+    'StreetFighterIISpecialChampionEdition-Genesis-v0': [StreetFighterFlipEnvWrapper, StreetFighter2Discretizer],
+    'SuperHangOn-Genesis-v0': [SuperHangOnDiscretizer, SuperHangOnStageSaver],
 }
 
 GAME_STATES = {
-    'NeedForSpeedCarbon-GBA': [
+    'NeedForSpeedCarbon-GBA-v0': [
         '3LapsHardDifficulty.state',
         '3LapsNormalDifficulty.state',
         '3LapsNormalDifficulty2.state',

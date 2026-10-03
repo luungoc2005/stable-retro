@@ -6,7 +6,7 @@ import argparse
 
 import gymnasium as gym
 import numpy as np
-from gymnasium.wrappers.time_limit import TimeLimit
+from gymnasium.wrappers import TimeLimit
 from stable_baselines3 import PPO
 from stable_baselines3.common.atari_wrappers import ClipRewardEnv, WarpFrame
 from stable_baselines3.common.vec_env import (
@@ -16,12 +16,12 @@ from stable_baselines3.common.vec_env import (
 )
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.evaluation import evaluate_policy
-from retro.examples.wrappers import StreetFighterFlipEnvWrapper, StochasticFrameSkip
+from stable_retro.examples.wrappers import StreetFighterFlipEnvWrapper, StochasticFrameSkip, resolve_game
 from typing import Dict, Any
 from optuna.pruners import MedianPruner
 from optuna.samplers import TPESampler
 import optuna
-import retro
+import stable_retro as retro
 import torch.nn as nn
 
 N_TRIALS = 100
@@ -33,10 +33,11 @@ N_EVAL_EPISODES = 3
 
 
 def make_retro(*, game, state=None, max_episode_steps=4500, **kwargs):
+    game = resolve_game(game)
     if state is None:
         state = retro.State.DEFAULT
     env = retro.make(game, state, **kwargs)
-    if game == "StreetFighterIISpecialChampionEdition-Genesis":
+    if game == "StreetFighterIISpecialChampionEdition-Genesis-v0":
         env = StreetFighterFlipEnvWrapper(env)
     env = StochasticFrameSkip(env, n=4, stickprob=0.25)
     if max_episode_steps is not None:

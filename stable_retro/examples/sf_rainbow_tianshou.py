@@ -1,8 +1,8 @@
-import tianshou_patch as _
+import stable_retro.examples.tianshou_patch as tianshou_patch
 import torch
 import torch.nn as nn
 import numpy as np
-import retro
+import stable_retro as retro
 import argparse
 import os
 import pprint
@@ -10,9 +10,9 @@ import random
 from tianshou.utils.net.discrete import NoisyLinear
 from gymnasium import spaces
 from typing import Any, List, Union, cast
-from gymnasium.wrappers.time_limit import TimeLimit
+from gymnasium.wrappers import TimeLimit
 from stable_baselines3.common.monitor import Monitor
-from retro.examples.wrappers import (
+from stable_retro.examples.wrappers import (
     StochasticFrameSkip,
     ActionBias,
     FrameStack,
@@ -20,14 +20,17 @@ from retro.examples.wrappers import (
     WarpFrame,
     GAME_WRAPPERS,
     GAME_STATES,
+    resolve_game,
 )
-from retro.examples.impala_cnn import ConvSequence
+from stable_retro.examples.impala_cnn import ConvSequence
 from torch.utils.tensorboard import SummaryWriter
 
 from tianshou.env import ShmemVectorEnv
-from tianshou.data import Batch, Collector, PrioritizedVectorReplayBuffer, VectorReplayBuffer, to_numpy
-from tianshou.policy import RainbowPolicy
-from tianshou.trainer import OffpolicyTrainer
+from tianshou.data import Collector, CollectStats, PrioritizedVectorReplayBuffer
+from tianshou.algorithm.modelfree.c51 import C51Policy
+from tianshou.algorithm.modelfree.rainbow import RainbowDQN
+from tianshou.algorithm.optim import TorchOptimizerFactory
+from tianshou.trainer import OffPolicyTrainerParams
 from tianshou.utils import TensorboardLogger
 import json
 
@@ -144,6 +147,7 @@ class RainbowNet(nn.Module):
         return probs, state
 
 def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_skip=True, **kwargs):
+    game = resolve_game(game)
     if state is None:
         state = retro.State.DEFAULT
         
@@ -160,7 +164,7 @@ def make_retro(*, game, state=None, max_episode_steps=0, action_bias='', frame_s
         else:
             action_bias_list = action_bias.split(' ')
         action_bias_list = [float(item.strip()) for item in action_bias_list]
-        action_meaning = env.get_action_meaning([1 if item > 0 else 0 for item in action_bias_list])
+        action_meaning = env.unwrapped.get_action_meaning([1 if item > 0 else 0 for item in action_bias_list])
         if len(action_meaning) > 0:
             import warnings
             warnings.warn(f"Action bias on: {action_meaning}")
@@ -187,8 +191,8 @@ def wrap_deepmind_retro(env, grayscale=True):
     return env
 
 def make_env(args, render_mode="human"):
-    if args.game in GAME_STATES:
-        all_states = GAME_STATES[args.game]
+    if resolve_game(args.game) in GAME_STATES:
+        all_states = GAME_STATES[resolve_game(args.game)]
         state = random.choice(all_states)
         print(f"Starting new env with state={state}")
     else:
@@ -298,25 +302,33 @@ def main():
     
     os.makedirs(tb_log_path, exist_ok=True)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
-
-    policy = RainbowPolicy(
+    policy = C51Policy(
         model=model,
-        optim=optimizer,
         action_space=action_space,
-        discount_factor=args.gamma,
         v_min=args.v_min,
         v_max=args.v_max,
-        estimation_step=args.n_step,
-        target_update_freq=args.target_update_freq,
-    ).to(args.device)
+        eps_training=args.eps_train,
+        eps_inference=args.eps_test,
+    )
 
-    # Load checkpoint if exists
+    # Load weights before creating the algorithm so its target network starts from them
+    algorithm_state = None
     if checkpoint_dir and os.path.exists(os.path.join(checkpoint_dir, "policy.pth")):
         checkpoint_path = os.path.join(checkpoint_dir, "policy.pth")
         print(f"Loading checkpoint from {checkpoint_path}")
-        policy.load_state_dict(torch.load(checkpoint_path, map_location=args.device))
+        algorithm_state = tianshou_patch.load_policy_weights(policy, checkpoint_path, args.device)
         print("Checkpoint loaded successfully")
+
+    algorithm = RainbowDQN(
+        policy=policy,
+        optim=TorchOptimizerFactory(torch.optim.AdamW, lr=args.lr),
+        gamma=args.gamma,
+        n_step_return_horizon=args.n_step,
+        target_update_freq=args.target_update_freq,
+    ).to(args.device)
+    if algorithm_state is not None:
+        # Also restores optimizer state and the target network
+        algorithm.load_state_dict(algorithm_state)
 
     stack_num = 4
     if args.no_grayscale:
@@ -334,27 +346,25 @@ def main():
     # If watch mode, just watch and exit
     if args.watch:
         print("Watch mode: Testing agent performance...")
-        policy.eval()
-        policy.set_eps(args.eps_test)
-        test_collector = Collector(policy, venv, exploration_noise=True)
+        test_collector = Collector[CollectStats](algorithm, venv, exploration_noise=True)
         result = test_collector.collect(n_episode=args.training_num, render=1.0/30.0)
-        pprint.pprint(result)
-        rew = result["rews"].mean()
-        print(f"Mean reward (over {result['n/ep']} episodes): {rew}")
+        result.pprint_asdict()
+        print(f"Mean reward (over {result.n_collected_episodes} episodes): {result.returns_stat.mean}")
         venv.close()
         return
 
-    train_collector = Collector(policy, venv, buffer, exploration_noise=True)
-    test_collector = Collector(policy, venv, exploration_noise=True)
+    train_collector = Collector[CollectStats](algorithm, venv, buffer, exploration_noise=True)
+    test_collector = Collector[CollectStats](algorithm, venv, exploration_noise=True)
 
+    train_collector.reset()
     train_collector.collect(n_step=args.batch_size * args.training_num)
 
     writer = SummaryWriter(tb_log_path)
     writer.add_text("args", str(args))
     logger = TensorboardLogger(writer)
 
-    def save_best_fn(policy):
-        torch.save(policy.state_dict(), os.path.join(tb_log_path, "policy.pth"))
+    def save_best_fn(algorithm):
+        torch.save(algorithm.state_dict(), os.path.join(tb_log_path, "policy.pth"))
         default = lambda o: f"<<non-serializable: {type(o).__qualname__}>>"
         with open(os.path.join(tb_log_path, 'args.json'), 'w') as fp:
             json.dump(args.__dict__, fp, indent=2, default=default)
@@ -367,8 +377,7 @@ def main():
             'epoch': epoch,
             'env_step': env_step,
             'gradient_step': gradient_step,
-            'policy_state_dict': policy.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
+            'algorithm_state_dict': algorithm.state_dict(),
         }, checkpoint_path)
         print(f"Saved checkpoint to {checkpoint_path}")
         # Keep only last 3 checkpoints
@@ -389,7 +398,7 @@ def main():
             eps = args.eps_train - env_step / 1e6 * (args.eps_train - args.eps_train_final)
         else:
             eps = args.eps_train_final
-        policy.set_eps(eps)
+        policy.set_eps_training(eps)
         if env_step % 1000 == 0:
             logger.write("train/env_step", env_step, {"train/eps": eps})
         if env_step <= args.beta_anneal_step:
@@ -400,43 +409,36 @@ def main():
         if env_step % 1000 == 0:
             logger.write("train/env_step", env_step, {"train/beta": beta})
 
-    def test_fn(epoch, env_step):
-        policy.set_eps(args.eps_test)
-
-    result = OffpolicyTrainer(
-        policy=policy,
-        train_collector=train_collector,
-        test_collector=test_collector,
-        max_epoch=args.epoch,
-        step_per_epoch=args.step_per_epoch,
-        step_per_collect=args.step_per_collect,
-        episode_per_test=args.training_num,
-        batch_size=args.batch_size,
-        train_fn=train_fn,
-        test_fn=test_fn,
-        stop_fn=stop_fn,
-        save_best_fn=save_best_fn,
-        save_checkpoint_fn=save_checkpoint_fn,
-        logger=logger,
-        update_per_step=args.update_per_step,
-        test_in_train=False,
-    ).run()
+    result = algorithm.run_training(
+        OffPolicyTrainerParams(
+            training_collector=train_collector,
+            test_collector=test_collector,
+            max_epochs=args.epoch,
+            epoch_num_steps=args.step_per_epoch,
+            collection_step_num_env_steps=args.step_per_collect,
+            test_step_num_episodes=args.training_num,
+            batch_size=args.batch_size,
+            training_fn=train_fn,
+            stop_fn=stop_fn,
+            save_best_fn=save_best_fn,
+            save_checkpoint_fn=save_checkpoint_fn,
+            logger=logger,
+            update_step_num_gradient_steps_per_sample=args.update_per_step,
+            test_in_training=False,
+        )
+    )
 
     pprint.pprint(result)
 
     # watch agent's performance
     def watch():
         print("Setup test envs ...")
-        policy.eval()
-        policy.set_eps(args.eps_test)
 
         print("Testing agent ...")
         test_collector.reset()
         result = test_collector.collect(n_episode=args.training_num, render=1.0/30.0)
-
-        pprint.pprint(result)
-        rew = result["rews"].mean()
-        print(f"Mean reward (over {result['n/ep']} episodes): {rew}")
+        result.pprint_asdict()
+        print(f"Mean reward (over {result.n_collected_episodes} episodes): {result.returns_stat.mean}")
     
     watch()
     venv.close()

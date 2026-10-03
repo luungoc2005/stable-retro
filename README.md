@@ -73,6 +73,13 @@ cd stable-retro
 pip3 install -e .
 ```
 
+Or with [uv](https://docs.astral.sh/uv/), which also installs the `rl` dependency group used by the training examples (Python 3.11+):
+```
+uv sync
+uv run python -m stable_retro.examples.ppo
+```
+After changing C++ sources, rebuild with `uv sync --reinstall-package stable-retro`.
+
 For platform-specific instructions including building from source, optional core dependencies, and the Integration UI:
 - [Linux Installation](docs/linux_installation.md) - Ubuntu/Debian dependencies, N64 and Dreamcast core setup, WSL2 guide
 - [macOS Installation](docs/macos_installation.md) - Apple Silicon build instructions, Homebrew dependencies
