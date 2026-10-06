@@ -3,28 +3,33 @@
 A pixel-based driving policy for *Need for Speed Carbon: Own the City* (GBA), trained with
 tianshou PPO to drive tracks it has never seen.
 
-## Results (`models/nfs_ppo_v6.pth`)
+## Results
 
-Evaluated on 33 races on 7 held-out tracks that were never used for training:
+Evaluated on 33 races on 7 held-out tracks that were never used for training
+(deterministic policy, finish rate / wins):
 
-| difficulty | finished | wins | pace vs. race leader (Hard) |
-| --- | --- | --- | --- |
-| Easy | 45% | 0 | |
-| Normal | 27% | 0 | |
-| Hard | 36% | 0 | ~0.70 |
+| model | Easy | Normal | Hard | wins |
+| --- | --- | --- | --- | --- |
+| `models/nfs_dagger_v2.pth` (imitation of `RacingExpert`) | 64% | 64% | 55% | 0 |
+| `models/nfs_ppo_v6.pth` (PPO) | 45% | 27% | 36% | 0 |
 
-The agent follows unseen tracks but does not yet beat the AI. Even a RAM-based expert that
-follows the AI's own racing line is ~10% slower than the Easy AI, so beating the AI likely
-needs game mechanics (nitro, drifting, drafting) that are still being investigated.
+The agent follows unseen tracks but does not yet beat the AI. The RAM-based `RacingExpert`
+(pure pursuit on the AI racing line, braking before corners, steering around opponents)
+finishes ~90% of races but is still ~10% slower than the AI and wins only 6 of 147 races.
+
+Findings about the game: the car can corner as hard as the AI but carries ~25% less speed
+through the sharpest turns; steering ramps up while a direction is held and snaps back to
+zero on release (0x202c644), so short repeated presses steer best; handbrake drifts, nitro
+(SELECT), faster cars (the AI scales with your car), catch-up and blocking opponents did not help.
 
 ## Usage
 
 ```bash
 # watch the agent drive a held-out track (or --video out.mp4 to record)
-uv run python -m stable_retro.examples.nfs_drive --checkpoint stable_retro/examples/models/nfs_ppo_v6.pth --state Circuit.Parkside.Fwd.Hard
+uv run python -m stable_retro.examples.nfs_drive --checkpoint stable_retro/examples/models/nfs_dagger_v2.pth --state Circuit.Parkside.Fwd.Hard
 
 # evaluate finish / win rates on held-out tracks
-uv run python -m stable_retro.examples.nfs_eval --checkpoint stable_retro/examples/models/nfs_ppo_v6.pth --split test
+uv run python -m stable_retro.examples.nfs_eval --checkpoint stable_retro/examples/models/nfs_dagger_v2.pth --split test
 
 # train (PPO), optionally starting from imitation-learned weights
 uv run python -m stable_retro.examples.nfs_dagger --out tb_logs_tianshou/dagger

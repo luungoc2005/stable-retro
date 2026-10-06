@@ -47,7 +47,7 @@ def build_student(device):
 def _collect(job):
     from stable_retro.examples.nfs_expert import add_pose_vars, expert_for, expert_label, load_lines
 
-    states, n_steps, beta, weights, seed = job
+    states, n_steps, beta, weights, seed, restart = job
     torch.set_num_threads(1)
     rng = np.random.default_rng(seed)
     student = None
@@ -57,7 +57,7 @@ def _collect(job):
         policy.actor.eval()
         student = policy.actor
     lines = load_lines()
-    env = NFSRaceEnv(states, sticky_prob=0.0, mirror_prob=0.5, augment=True, seed=seed)
+    env = NFSRaceEnv(states, sticky_prob=0.0, mirror_prob=0.5, augment=True, seed=seed, restart_prob=restart)
     add_pose_vars(env.data)
     obs_buf = np.zeros((n_steps, *env.observation_space.shape), np.uint8)
     act_buf = np.zeros(n_steps, np.int64)
@@ -122,6 +122,7 @@ def main():
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--workers", type=int, default=10)
+    p.add_argument("--restart-prob", type=float, default=0.3, help="start episodes from mid-race snapshots")
     p.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu")
     args = p.parse_args()
     os.makedirs(args.out, exist_ok=True)
@@ -135,7 +136,8 @@ def main():
         beta = args.betas[min(it, len(args.betas) - 1)]
         t0 = time.time()
         per = args.steps_per_iter // args.workers
-        jobs = [(states, per, beta, weights_path if it > 0 else None, 1000 * it + w) for w in range(args.workers)]
+        jobs = [(states, per, beta, weights_path if it > 0 else None, 1000 * it + w, args.restart_prob)
+                for w in range(args.workers)]
         with mp.get_context("spawn").Pool(args.workers) as pool:
             results = pool.map(_collect, jobs)
         obs = np.concatenate([r[0] for r in results])
